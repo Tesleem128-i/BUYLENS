@@ -26,10 +26,13 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "pic")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
 _database_url = os.environ.get("DATABASE_URL", "sqlite:///buylens.db")
-# Render (and some other hosts) hand out "postgres://" URLs, but SQLAlchemy
-# 1.4+/2.x requires the "postgresql://" scheme.
+# Render (and some other hosts) hand out "postgres://" URLs; SQLAlchemy needs
+# "postgresql://", and we point it at the psycopg3 driver (not psycopg2) since
+# psycopg2 has no prebuilt wheels for newer Python versions yet.
 if _database_url.startswith("postgres://"):
-    _database_url = _database_url.replace("postgres://", "postgresql://", 1)
+    _database_url = _database_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif _database_url.startswith("postgresql://"):
+    _database_url = _database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = _database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
