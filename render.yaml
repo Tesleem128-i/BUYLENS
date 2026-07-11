@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: buylens
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
+    autoDeploy: true
+    disk:
+      name: buylens-uploads
+      mountPath: /opt/render/project/src/pic
+      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false        # set manually to your existing Postgres connection string
+      - key: FLASK_DEBUG
+        value: "false"
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        value: BUYLENS
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_SEARCH_API_KEY
+        sync: false
+      - key: GOOGLE_SEARCH_CX
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false

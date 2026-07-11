@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log in — BuyLens</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+
+<div class="auth-glow"></div>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+
+<div class="auth-card">
+  <div class="auth-card__mark">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens">
+    <span>BUY<b>LENS</b></span>
+  </div>
+
+  <div class="auth-eyebrow">Welcome Back</div>
+  <h1 class="auth-title">Log in to your lens.</h1>
+  <p class="auth-sub">Pick up where you left off — saved scans, price alerts, and AI verdicts.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="auth-flash auth-flash--{{ 'error' if category == 'error' else 'info' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form class="auth-form" method="POST" action="{{ url_for('login') }}">
+    <div class="auth-field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" value="{{ email or '' }}" required>
+    </div>
+    <div class="auth-field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="Your password" required>
+    </div>
+
+    <div class="auth-row">
+      <span></span>
+      <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
+    </div>
+
+    <button type="submit" class="auth-submit">Log in</button>
+  </form>
+
+  <p class="auth-switch">New to BuyLens? <a href="{{ url_for('signup') }}">Create an account</a></p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,2180 @@
+import os
+import re
+import json
+import base64
+import time
+import secrets
+from urllib.parse import quote_plus
+from datetime import datetime, timedelta
+from functools import wraps
+
+import requests
+from dotenv import load_dotenv
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, stream_with_context, send_from_directory
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
+import random
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# App / config
+# ---------------------------------------------------------------------------
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "pic")
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
+_database_url = os.environ.get("DATABASE_URL", "sqlite:///buylens.db")
+# Render (and some other hosts) hand out "postgres://" URLs, but SQLAlchemy
+# 1.4+/2.x requires the "postgresql://" scheme.
+if _database_url.startswith("postgres://"):
+    _database_url = _database_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _database_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+
+db = SQLAlchemy(app)
+
+# --- Brevo (Sendinblue) transactional email ---------------------------------
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
+BREVO_SENDER_EMAIL = os.environ.get("BREVO_SENDER_EMAIL", "muhammedtesleemolatundun@gmail.com")
+BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "BUYLENS")
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+
+EMAIL_CODE_LENGTH = 6
+
+# --- Groq (AI Buying Intelligence engine) ------------------------------------
+# Groq's Chat Completions API is OpenAI-compatible: https://api.groq.com/openai/v1
+# Free API key, no card required: https://console.groq.com/keys
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_TEXT_MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
+GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+
+# Single boolean flag the app / dashboard consult to know whether "Lens" is online.
+LENS_API_KEY = GROQ_API_KEY
+
+BUYLENS_SYSTEM_PROMPT_BASE = (
+    "You are Lens, the AI shopping intelligence inside BuyLens. Speak with calm, specific "
+    "confidence — never generic. Ground every answer in the exact product/category mentioned. "
+    "For comparisons or recommendations, give a clear verdict, concrete tradeoffs (performance, "
+    "battery, camera, value, repairability, long-term cost) and a short 'why' per pick. Use "
+    "Naira (NGN) when the user is budgeting in Naira, otherwise the implied currency. Reason "
+    "from your knowledge of typical specs and pricing bands, and note that figures are "
+    "estimates. Format responses in clean markdown: headers, bold, tables, bullet lists.\n\n"
+    "VERIFICATION DISCIPLINE: You cannot browse live listings, so never state a spec, price, "
+    "release date or availability claim as flat fact — frame it as your best estimate and "
+    "explicitly tell the shopper to confirm the live price, condition, and stock on the "
+    "marketplace links/images the app attaches to your picks before paying. If you are unsure "
+    "about a specific number, say so plainly rather than inventing false precision. Never "
+    "fabricate a marketplace name, URL, or review quote — the app attaches real marketplace "
+    "links and product photos itself; you only need to name the product clearly and accurately "
+    "so those lookups succeed."
+)
+
+# --- Live USD -> NGN rate (and any other currency BuyLens quotes) -----------
+# The model has no live internet access, so instead of letting it *guess* an
+# exchange rate from stale training data (which is how it invented a wildly
+# wrong ₦/₦ ratio before), we fetch a real rate here and hand it to the model
+# as a fact it must use. Cached for a few hours so we don't hammer the API.
+FX_API_URL = "https://open.er-api.com/v6/latest/USD"  # free, keyless, updated ~daily
+FX_CACHE_TTL_SECONDS = 6 * 3600
+FX_FALLBACK_USD_NGN = 1550.0  # only used if the FX API is unreachable
+_fx_cache = {"rates": None, "fetched_at": 0}
+
+
+def get_fx_rates():
+    """Return the cached (or freshly fetched) {currency: rate_per_usd} dict."""
+    now = time.time()
+    if _fx_cache["rates"] and (now - _fx_cache["fetched_at"] < FX_CACHE_TTL_SECONDS):
+        return _fx_cache["rates"]
+    try:
+        resp = requests.get(FX_API_URL, timeout=6)
+        data = resp.json()
+        rates = data.get("rates") or {}
+        if rates:
+            _fx_cache["rates"] = rates
+            _fx_cache["fetched_at"] = now
+            return rates
+    except Exception:
+        pass
+    # Keep serving a stale cache rather than nothing, if we have one.
+    return _fx_cache["rates"] or {"NGN": FX_FALLBACK_USD_NGN}
+
+
+def get_usd_to_ngn_rate():
+    rates = get_fx_rates()
+    return round(float(rates.get("NGN", FX_FALLBACK_USD_NGN)), 2)
+
+
+def build_system_prompt(memory_notes=None):
+    """System prompt + the current live FX rate, so Lens converts currency
+    correctly instead of inventing a number from memory. Optionally folds in
+    a shopper's derived preferences ("AI Shopping Memory") so recommendations
+    read as personalized instead of generic."""
+    rate = get_usd_to_ngn_rate()
+    fx_note = (
+        f"\n\nLIVE FX RATE (fetched just now, treat as authoritative): "
+        f"1 USD ≈ ₦{rate:,.2f} NGN. Always use this exact rate for any USD↔NGN "
+        f"conversion — show the arithmetic briefly if it's relevant, and mention "
+        f"that FX rates drift day to day so the shopper should sanity-check it "
+        f"against a live converter if it's been a while since this was fetched."
+    )
+    memory_note = ""
+    if memory_notes:
+        memory_note = (
+            "\n\nSHOPPER MEMORY (derived from this account's past searches, wishlist "
+            "and stats — use it to personalize your answer where relevant, but never "
+            "state it back as if you're guessing/reading their mind, just quietly "
+            "factor it in):\n- " + "\n- ".join(memory_notes)
+        )
+    return BUYLENS_SYSTEM_PROMPT_BASE + fx_note + memory_note
+
+
+_CURRENCY_NUMBER_RE = re.compile(r"[\d,]+(?:\.\d+)?")
+
+
+def _parse_amount(text):
+    """Pull the first plausible numeric amount out of a free-text price
+    string like '₦250,000' or '$1,200 - $1,400' -> 250000.0 / 1200.0."""
+    if not text:
+        return None
+    m = _CURRENCY_NUMBER_RE.search(text.replace(",", ""))
+    if not m:
+        return None
+    try:
+        return float(m.group().replace(",", ""))
+    except ValueError:
+        return None
+
+
+_BRAND_KEYWORDS = [
+    "Apple", "Samsung", "Sony", "Logitech", "Dell", "HP", "Lenovo", "Asus",
+    "Acer", "MSI", "LG", "Bose", "JBL", "Xiaomi", "Google", "Microsoft",
+    "Razer", "Nvidia", "AMD", "Intel", "Nike", "Adidas", "Canon", "Nikon",
+]
+
+
+def build_memory_profile(user_id):
+    """Heuristic (no AI call) 'AI Shopping Memory' profile: scans this
+    account's stored wishlist/history/stats to surface plain-language
+    preferences — top category, typical budget ceiling, favored brands."""
+    wishlist = WishlistItem.query.filter_by(user_id=user_id).all()
+    history = HistoryItem.query.filter_by(user_id=user_id).order_by(HistoryItem.ts.desc()).limit(60).all()
+    stats = get_or_create_stats(user_id)
+
+    notes = []
+    top_cats = sorted((stats.categories or {}).items(), key=lambda kv: kv[1], reverse=True)
+    if top_cats:
+        notes.append(f"Shops most often in: {top_cats[0][0]}" + (f" and {top_cats[1][0]}" if len(top_cats) > 1 else ""))
+
+    amounts = [a for a in (_parse_amount(w.price) for w in wishlist) if a]
+    if amounts:
+        ceiling = max(amounts)
+        notes.append(f"Typical budget ceiling seen on their wishlist: ~₦{ceiling:,.0f}")
+
+    corpus = " ".join([w.name for w in wishlist] + [h.text for h in history]).lower()
+    brand_hits = [(b, corpus.count(b.lower())) for b in _BRAND_KEYWORDS]
+    brand_hits = [b for b in brand_hits if b[1] > 0]
+    brand_hits.sort(key=lambda x: x[1], reverse=True)
+    if brand_hits:
+        notes.append(f"Has shown a preference for: {', '.join(b[0] for b in brand_hits[:3])}")
+
+    if not notes:
+        notes.append("No strong shopping pattern yet — this account is still new.")
+
+    return {
+        "notes": notes,
+        "top_category": top_cats[0][0] if top_cats else None,
+        "budget_ceiling": max(amounts) if amounts else None,
+        "brands": [b[0] for b in brand_hits[:5]],
+    }
+
+
+
+
+def _contents_to_messages(contents, system_instruction=None):
+    """Convert internal-style `contents` ([{role, parts:[{text}|{inline_data}]}])
+    into OpenAI/Groq-style `messages` ([{role, content}])."""
+    messages = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+
+    for item in contents:
+        role = item.get("role", "user")
+        role = "assistant" if role == "model" else role
+        parts = item.get("parts", [])
+
+        # Plain text-only message -> simple string content (cheaper/simpler).
+        if all("text" in p for p in parts):
+            messages.append({"role": role, "content": "".join(p["text"] for p in parts)})
+            continue
+
+        # Mixed text/image message -> OpenAI-style content blocks.
+        content_blocks = []
+        for p in parts:
+            if "text" in p:
+                content_blocks.append({"type": "text", "text": p["text"]})
+            elif "inline_data" in p:
+                mime = p["inline_data"].get("mime_type", "image/jpeg")
+                data = p["inline_data"].get("data", "")
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{data}"},
+                })
+        messages.append({"role": role, "content": content_blocks})
+    return messages
+
+
+def _groq_request(payload, stream=False):
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not configured on the server.")
+    return requests.post(
+        GROQ_CHAT_URL,
+        json=payload,
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+        timeout=60,
+        stream=stream,
+    )
+
+
+def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.7, model=None):
+    """Single-shot (non-streaming) call powering all of Lens' structured JSON and
+    chat replies. Runs on Groq under the hood."""
+    messages = _contents_to_messages(contents, system_instruction)
+    payload = {"model": model or GROQ_TEXT_MODEL, "messages": messages, "temperature": temperature}
+    if response_mime_type == "application/json":
+        payload["response_format"] = {"type": "json_object"}
+
+    resp = _groq_request(payload)
+    data = resp.json()
+    if resp.status_code != 200:
+        raise RuntimeError(data.get("error", {}).get("message", "Groq request failed."))
+    try:
+        return data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError):
+        raise RuntimeError("Groq returned an unexpected response shape.")
+
+
+def lens_generate_json(contents, system_instruction=None, temperature=0.6, model=None):
+    text = lens_generate(contents, system_instruction=system_instruction,
+                            response_mime_type="application/json", temperature=temperature, model=model)
+    return json.loads(text)
+
+
+def lens_stream(contents, system_instruction=None, temperature=0.7, model=None):
+    messages = _contents_to_messages(contents, system_instruction)
+    payload = {"model": model or GROQ_TEXT_MODEL, "messages": messages, "temperature": temperature, "stream": True}
+
+    resp = _groq_request(payload, stream=True)
+    if resp.status_code != 200:
+        try:
+            err = resp.json().get("error", {}).get("message", "Groq request failed.")
+        except Exception:
+            err = "Groq request failed."
+        yield f"event: error\ndata: {json.dumps({'error': err})}\n\n"
+        return
+
+    # Force UTF-8 decoding of the raw bytes ourselves. `resp.iter_lines(decode_unicode=True)`
+    # lets `requests` guess the encoding from the Content-Type header, and when Groq's
+    # SSE response doesn't declare a charset, requests falls back to Latin-1 — which
+    # mangles any multi-byte UTF-8 character (emoji, curly quotes, accented letters)
+    # into garbled symbols like "ð" or "â". Decoding explicitly as UTF-8 fixes that.
+    for raw_line in resp.iter_lines(decode_unicode=False):
+        if not raw_line:
+            continue
+        line = raw_line.decode("utf-8", errors="replace")
+        if not line.startswith("data:"):
+            continue
+        raw = line[len("data:"):].strip()
+        if raw == "[DONE]":
+            break
+        try:
+            chunk = json.loads(raw)
+            text = chunk["choices"][0]["delta"].get("content", "")
+        except (KeyError, IndexError, json.JSONDecodeError):
+            continue
+        if text:
+            yield f"data: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
+    yield "event: done\ndata: {}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Marketplace links (deterministic — built here, never trusted to the AI,
+# so the app never hallucinates a store name or a broken URL)
+# ---------------------------------------------------------------------------
+def marketplace_links(name):
+    q = quote_plus(name or "")
+    if not q:
+        return []
+    return [
+        {"name": "Jumia", "icon": "🛍️", "url": f"https://www.jumia.com.ng/catalog/?q={q}"},
+        {"name": "Konga", "icon": "🛒", "url": f"https://www.konga.com/search?search={q}"},
+        {"name": "Amazon", "icon": "📦", "url": f"https://www.amazon.com/s?k={q}"},
+        {"name": "AliExpress", "icon": "🌐", "url": f"https://www.aliexpress.com/wholesale?SearchText={q}"},
+        {"name": "eBay", "icon": "🏷️", "url": f"https://www.ebay.com/sch/i.html?_nkw={q}"},
+        {"name": "Temu", "icon": "✨", "url": f"https://www.temu.com/search_result.html?search_key={q}"},
+    ]
+
+
+def enrich_picks(payload, key="picks", name_field="name"):
+    """Attach real marketplace links + an image-search query to every pick in a
+    list response, without ever letting the model itself invent a URL."""
+    for p in (payload.get(key) or []):
+        nm = (p.get(name_field) or "").strip()
+        if nm:
+            p["marketplace_links"] = marketplace_links(nm)
+            p["image_query"] = nm
+    return payload
+
+
+def enrich_single(payload, name_field="product"):
+    """Attach marketplace links + image query for single-product responses
+    (reviews, price-history, vision scan)."""
+    nm = (payload.get(name_field) or "").strip()
+    if nm:
+        payload["marketplace_links"] = marketplace_links(nm)
+        payload["image_query"] = nm
+    return payload
+
+
+# --- Product image lookup ---------------------------------------------------
+# Two providers, tried in order:
+#  1. Pexels — free stock-photo API (20,000 requests/month free, no card
+#     required, instant key). Better photo quality than Openverse and a much
+#     bigger index, but still stock-photography oriented — it won't have
+#     photos of an exact obscure SKU (e.g. "Acer Nitro 5 AN515-58"), just
+#     generic "laptop" / "gaming laptop" type shots. Get a free key at
+#     https://www.pexels.com/api/ and set PEXELS_API_KEY.
+#  2. Openverse — free, keyless, no setup, openly-licensed images only.
+#     Used automatically whenever Pexels isn't configured, or as a fallback
+#     if Pexels returns nothing.
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
+OPENVERSE_IMAGE_URL = "https://api.openverse.org/v1/images/"
+
+# Angles we try to give the "view it from every side" feel. The first hit per
+# angle wins; angles that come back empty are simply omitted client-side.
+IMAGE_ANGLES = [
+    {"label": "Front", "suffix": "front view product photo"},
+    {"label": "Side", "suffix": "side view product photo"},
+    {"label": "Back", "suffix": "back view product photo"},
+    {"label": "Close-up", "suffix": "close up detail"},
+    {"label": "In Use", "suffix": "in hand lifestyle photo"},
+]
+
+
+def _pexels_image_search(query, count=2):
+    if not PEXELS_API_KEY:
+        app.logger.warning("Pexels image search skipped: no API key configured")
+        return []
+    try:
+        resp = requests.get(
+            PEXELS_SEARCH_URL,
+            headers={"Authorization": PEXELS_API_KEY},
+            params={
+                "query": query,
+                "per_page": max(1, min(count, 15)),
+            },
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            app.logger.warning(
+                "Pexels image search HTTP %s for query %r: %s",
+                resp.status_code, query, resp.text[:500]
+            )
+            return []
+        body = resp.json()
+        photos = body.get("photos") or []
+        if not photos:
+            app.logger.info("Pexels image search returned 0 photos for query %r", query)
+        normalized = []
+        for p in photos:
+            src = p.get("src") or {}
+            url = src.get("large") or src.get("original")
+            if not url:
+                continue
+            normalized.append({
+                "url": url,
+                "thumbnail": src.get("medium") or url,
+                "title": p.get("alt") or "",
+                "landing_url": p.get("url") or "",
+                "credit": p.get("photographer") or "Pexels",
+                "provider": "Pexels",
+            })
+        return normalized
+    except Exception as e:
+        app.logger.warning("Pexels image search exception for query %r: %s", query, e)
+        return []
+
+
+def _openverse_search(query, page_size=1):
+    try:
+        resp = requests.get(
+            OPENVERSE_IMAGE_URL,
+            params={"q": query, "page_size": page_size, "license_type": "commercial,modification"},
+            timeout=8,
+            headers={"User-Agent": "BuyLens/1.0 (product visual search)"},
+        )
+        if resp.status_code != 200:
+            return []
+        normalized = []
+        for r in resp.json().get("results", []):
+            url = r.get("url") or r.get("thumbnail")
+            if not url:
+                continue
+            normalized.append({
+                "url": url,
+                "thumbnail": r.get("thumbnail") or url,
+                "title": r.get("title") or "",
+                "landing_url": r.get("foreign_landing_url") or "",
+                "credit": r.get("creator") or "",
+                "provider": "Openverse (CC)",
+            })
+        return normalized
+    except Exception:
+        return []
+
+
+def _search_images(query, count=2):
+    """Pexels first (if configured) for better photo quality/index size;
+    Openverse as the automatic, keyless fallback."""
+    results = _pexels_image_search(query, count=count)
+    if results:
+        return results
+    return _openverse_search(query, page_size=count)
+
+
+# Pexels is stock photography, not a product-photo index — it has no idea
+# what an "Acer Nitro 5 AN515-58" is. If the specific/model-name query comes
+# up empty, fall back to a generic category term so shoppers at least see a
+# representative photo instead of nothing (or, worse, an unrelated product).
+# This is only used as a last resort and is always labeled "Representative"
+# rather than implied to be the exact unit.
+CATEGORY_KEYWORDS = [
+    ("laptop", "laptop computer"),
+    ("notebook", "laptop computer"),
+    ("macbook", "laptop computer"),
+    ("smartphone", "smartphone"),
+    ("phone", "smartphone"),
+    ("tablet", "tablet computer"),
+    ("ipad", "tablet computer"),
+    ("earbuds", "wireless earbuds"),
+    ("earbud", "wireless earbuds"),
+    ("headphone", "headphones"),
+    ("headset", "headphones"),
+    ("smartwatch", "smartwatch"),
+    ("watch", "smartwatch"),
+    ("camera", "camera"),
+    ("monitor", "computer monitor"),
+    ("television", "television"),
+    (" tv ", "television"),
+    ("speaker", "bluetooth speaker"),
+    ("router", "wifi router"),
+    ("keyboard", "computer keyboard"),
+    ("mouse", "computer mouse"),
+    ("printer", "printer"),
+    ("console", "game console"),
+    ("drone", "drone"),
+]
+
+
+def _generic_category_query(product_name):
+    name_lower = f" {product_name.lower()} "
+    for keyword, generic_term in CATEGORY_KEYWORDS:
+        if keyword in name_lower:
+            return generic_term
+    return None
+
+
+def fetch_product_images(product_name):
+    """Return a small gallery of real photos of `product_name` from multiple
+    angles/contexts so the shopper can 'spin' the product in the UI."""
+    product_name = (product_name or "").strip()
+    if not product_name:
+        return []
+
+    gallery = []
+    seen_urls = set()
+
+    for angle in IMAGE_ANGLES:
+        results = _search_images(f"{product_name} {angle['suffix']}", count=2)
+        for r in results:
+            if not r["url"] or r["url"] in seen_urls:
+                continue
+            seen_urls.add(r["url"])
+            gallery.append({
+                "angle": angle["label"],
+                "image": r["url"],
+                "thumbnail": r["thumbnail"],
+                "title": r["title"] or product_name,
+                "source": r["landing_url"],
+                "credit": r["credit"],
+                "provider": r["provider"],
+            })
+            break  # one image per angle is enough for the spin viewer
+
+    # Fallback: a broader plain search if angle-specific queries came up dry.
+    if not gallery:
+        for r in _search_images(product_name, count=6):
+            if not r["url"] or r["url"] in seen_urls:
+                continue
+            seen_urls.add(r["url"])
+            gallery.append({
+                "angle": "Gallery",
+                "image": r["url"],
+                "thumbnail": r["thumbnail"],
+                "title": r["title"] or product_name,
+                "source": r["landing_url"],
+                "credit": r["credit"],
+                "provider": r["provider"],
+            })
+            if len(gallery) >= 6:
+                break
+
+    # Last resort: a generic category photo (e.g. "gaming laptop") so the
+    # shopper sees *something* representative rather than a blank gallery.
+    # Always labeled clearly so it's never mistaken for the exact model/SKU.
+    if not gallery:
+        generic_term = _generic_category_query(product_name)
+        if generic_term:
+            for r in _search_images(generic_term, count=3):
+                if not r["url"] or r["url"] in seen_urls:
+                    continue
+                seen_urls.add(r["url"])
+                gallery.append({
+                    "angle": "Representative",
+                    "image": r["url"],
+                    "thumbnail": r["thumbnail"],
+                    "title": f"Representative {generic_term} photo (not the exact model)",
+                    "source": r["landing_url"],
+                    "credit": r["credit"],
+                    "provider": r["provider"],
+                    "generic": True,
+                })
+                if len(gallery) >= 3:
+                    break
+
+    return gallery
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    full_name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    profile_picture = db.Column(db.String(500), nullable=True)
+    interests = db.Column(db.String(500), nullable=True)
+    verification_code = db.Column(db.String(12), nullable=True)
+    is_verified = db.Column(db.Boolean, default=False, nullable=False)
+    reset_token = db.Column(db.String(128), nullable=True, index=True)
+    reset_token_expiry = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Persisted dashboard data — every search, wishlist save, price alert,
+# activity entry, achievement and stat used to live only in the browser's
+# localStorage (gone the moment cache was cleared / a new device was used).
+# These models move all of that into the database, keyed to the account,
+# so the dashboard is the same everywhere the shopper logs in.
+# ---------------------------------------------------------------------------
+class WishlistItem(db.Model):
+    id = db.Column(db.String(40), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    name = db.Column(db.String(255), nullable=False)
+    price = db.Column(db.String(120), default="—")
+    added_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "price": self.price,
+                "addedAt": int(self.added_at.timestamp() * 1000)}
+
+
+class AlertItem(db.Model):
+    id = db.Column(db.String(40), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    product = db.Column(db.String(255), nullable=False)
+    price = db.Column(db.String(120), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {"id": self.id, "product": self.product, "price": self.price,
+                "createdAt": int(self.created_at.timestamp() * 1000)}
+
+
+class HistoryItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    type = db.Column(db.String(40), nullable=False)
+    text = db.Column(db.String(500), nullable=False)
+    ts = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {"id": self.id, "type": self.type, "text": self.text,
+                "ts": int(self.ts.timestamp() * 1000)}
+
+
+class Achievement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    name = db.Column(db.String(255), nullable=False)
+    unlocked_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("user_id", "name", name="uq_user_achievement"),)
+
+
+class UserStats(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), primary_key=True)
+    saved = db.Column(db.Integer, default=0)
+    searches = db.Column(db.Integer, default=0)
+    accepted = db.Column(db.Integer, default=0)
+    categories_json = db.Column(db.Text, default="{}")
+
+    @property
+    def categories(self):
+        try:
+            return json.loads(self.categories_json or "{}")
+        except Exception:
+            return {}
+
+    @categories.setter
+    def categories(self, value):
+        self.categories_json = json.dumps(value or {})
+
+    def to_dict(self):
+        return {"saved": self.saved or 0, "searches": self.searches or 0,
+                "accepted": self.accepted or 0, "categories": self.categories}
+
+
+def get_or_create_stats(user_id):
+    stats = UserStats.query.get(user_id)
+    if not stats:
+        stats = UserStats(user_id=user_id, saved=0, searches=0, accepted=0, categories_json="{}")
+        db.session.add(stats)
+        db.session.commit()
+    return stats
+
+
+def profile_picture_url(user):
+    """Build a servable URL for a user's uploaded profile picture, or None
+    if they haven't set one (callers fall back to an initials avatar)."""
+    if not user or not user.profile_picture:
+        return None
+    filename = user.profile_picture
+    if filename.startswith("pic/"):
+        filename = filename[len("pic/"):]
+    return url_for("serve_profile_picture", filename=filename)
+
+
+with app.app_context():
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    db.create_all()
+    
+    # Add demo account if it doesn't exist
+    demo_email = "demo@gmail.com"
+    if not User.query.filter_by(email=demo_email).first():
+        demo_user = User(
+            full_name="DemoUser",
+            email=demo_email,
+            password_hash=generate_password_hash("demo12345"),
+            profile_picture="pic/demo_profile.jpg",
+            interests="Electronics, Tech, Gadgets",
+            is_verified=True,
+        )
+        db.session.add(demo_user)
+        db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            flash("Please log in to continue.", "error")
+            return redirect(url_for("login"))
+        # Guards against stale session cookies pointing at a user_id that no
+        # longer exists (e.g. after the database was reset/recreated) —
+        # without this, every view below would 500 on `user.whatever`.
+        if not User.query.get(session["user_id"]):
+            session.clear()
+            flash("Your session has expired. Please log in again.", "error")
+            return redirect(url_for("login"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def generate_verification_code():
+    return f"{random.randint(0, 999999):06d}"
+
+
+def generate_verification_code():
+    return f"{random.randint(0, 999999):06d}"
+
+
+def send_verification_email(user):
+    """Send a verification email through Brevo's transactional email API."""
+    code = generate_verification_code()
+    user.verification_code = code
+    db.session.commit()
+
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
+          BUY<span style="color:#4CE0FF;">LENS</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          Verify your email
+        </p>
+        <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
+          Hi {user.full_name}, use this code to verify your email address and activate your BuyLens account.
+        </p>
+        <div style="display:inline-block;margin-top:24px;padding:16px 28px;border-radius:100px;
+                    background:linear-gradient(90deg,#4CE0FF,#9D6BFF);color:#05070C;font-weight:700;
+                    letter-spacing:0.25em;font-size:24px;">
+          {code}
+        </div>
+        <p style="color:#8B93AE;font-size:12px;margin-top:28px;line-height:1.6;">
+          This code expires in 24 hours. If you didn't create a BuyLens account, you can safely ignore this email.
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.full_name}],
+        "subject": "Verify your BuyLens account",
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY or "",
+        "content-type": "application/json",
+    }
+
+    print(f"\n{'='*60}")
+    print(f"📧 ATTEMPTING TO SEND VERIFICATION EMAIL")
+    print(f"{'='*60}")
+    print(f"To: {user.email}")
+    print(f"Name: {user.full_name}")
+    print(f"Code: {code}")
+    print(f"Sender Email: {BREVO_SENDER_EMAIL}")
+    print(f"API Key present: {bool(BREVO_API_KEY)}")
+    print(f"API Key length: {len(BREVO_API_KEY) if BREVO_API_KEY else 0}")
+    print(f"{'='*60}\n")
+
+    if not BREVO_API_KEY:
+        print("❌ BREVO_API_KEY is NOT SET - Email will not be sent")
+        print(f"   Check your .env file")
+        app.logger.warning(
+            "BREVO_API_KEY is not set — skipping real send. Verification code: %s", code
+        )
+        return False
+
+    try:
+        print("🔄 Sending POST request to Brevo API...")
+        print(f"   URL: {BREVO_API_URL}")
+        
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        
+        print(f"   Status Code: {response.status_code}")
+        print(f"   Response Headers: {dict(response.headers)}")
+        print(f"   Response Body: {response.text}")
+        
+        if response.status_code in (200, 201):
+            print(f"✅ EMAIL SENT SUCCESSFULLY!")
+            return True
+        else:
+            print(f"❌ EMAIL SEND FAILED - Status {response.status_code}")
+            try:
+                error_data = response.json()
+                print(f"   Error details: {json.dumps(error_data, indent=2)}")
+            except:
+                pass
+            return False
+            
+    except requests.RequestException as exc:
+        print(f"❌ REQUEST EXCEPTION: {exc}")
+        app.logger.error("Brevo email send failed: %s", exc)
+        return False
+
+
+def send_reset_email(user, token):
+    """Email a signed, time-limited password reset link through Brevo —
+    same transactional pipeline used for verification emails."""
+    reset_link = url_for("reset_password", token=token, _external=True)
+
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
+          BUY<span style="color:#4CE0FF;">LENS</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          Reset your password
+        </p>
+        <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
+          Hi {user.full_name}, we received a request to reset the password on your BuyLens account.
+          Click the button below to choose a new one. This link expires in 1 hour.
+        </p>
+        <a href="{reset_link}"
+           style="display:inline-block;margin-top:24px;padding:16px 28px;border-radius:100px;
+                  background:linear-gradient(90deg,#4CE0FF,#9D6BFF);color:#05070C;font-weight:700;
+                  letter-spacing:.08em;text-transform:uppercase;font-size:13px;text-decoration:none;
+                  font-family:'JetBrains Mono',monospace;">
+          Reset Password
+        </a>
+        <p style="color:#8B93AE;font-size:12px;margin-top:28px;line-height:1.6;word-break:break-all;">
+          Or paste this link into your browser:<br>{reset_link}
+        </p>
+        <p style="color:#8B93AE;font-size:12px;margin-top:20px;line-height:1.6;">
+          If you didn't request this, you can safely ignore this email — your password will not change.
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.full_name}],
+        "subject": "Reset your BuyLens password",
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY or "",
+        "content-type": "application/json",
+    }
+
+    if not BREVO_API_KEY:
+        app.logger.warning(
+            "BREVO_API_KEY is not set — skipping real send. Reset link: %s", reset_link
+        )
+        return False
+
+    try:
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code in (200, 201):
+            return True
+        app.logger.warning(
+            "Brevo reset email HTTP %s: %s", response.status_code, response.text[:500]
+        )
+        return False
+    except requests.RequestException as exc:
+        app.logger.error("Brevo reset email send failed: %s", exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+@app.route("/")
+def index():
+    """Serve the BuyLens cinematic landing page."""
+    return render_template("index.html")
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        interests = request.form.get("interest", "").strip()
+
+        error = None
+        if not full_name or not email or not password:
+            error = "Fill in every field to continue."
+        elif password != confirm_password:
+            error = "Passwords don't match."
+        elif len(password) < 8:
+            error = "Use at least 8 characters for your password."
+        elif User.query.filter_by(email=email).first():
+            error = "An account with this email already exists."
+
+        if error:
+            flash(error, "error")
+            return render_template("signup.html", full_name=full_name, email=email, interest=interests)
+
+        uploaded_file = request.files.get("profile_picture")
+        saved_path = None
+        if uploaded_file and uploaded_file.filename:
+            filename = secure_filename(uploaded_file.filename)
+            if filename:
+                unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{filename}"
+                upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+                uploaded_file.save(upload_path)
+                saved_path = os.path.join("pic", unique_name).replace("\\", "/")
+
+        user = User(
+            full_name=full_name,
+            email=email,
+            password_hash=generate_password_hash(password),
+            profile_picture=saved_path,
+            interests=interests or None,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        send_verification_email(user)
+        return redirect(url_for("verify_sent", email=email))
+
+    return render_template("signup.html")
+
+
+@app.route("/verify-sent")
+def verify_sent():
+    email = request.args.get("email", "")
+    return render_template("verify_sent.html", email=email)
+
+
+@app.route("/verify-email", methods=["GET", "POST"])
+def verify_email():
+    email = request.args.get("email", "") or request.form.get("email", "")
+    email = email.strip().lower()
+    
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        
+        if not email:
+            flash("Email address is required.", "error")
+            return render_template("verify_result.html", status="invalid", email=email)
+        
+        user = User.query.filter_by(email=email).first()
+
+        if not user:
+            flash("We couldn't find that account.", "error")
+            return render_template("verify_result.html", status="invalid", email=email)
+
+        if user.is_verified:
+            return render_template("verify_result.html", status="success", email=email)
+
+        if not code:
+            flash("Please enter the verification code.", "error")
+            return render_template("verify_result.html", status="invalid", email=email)
+
+        if user.verification_code and user.verification_code == code:
+            user.is_verified = True
+            user.verification_code = None
+            db.session.commit()
+            return render_template("verify_result.html", status="success", email=email)
+
+        flash(f"That code is incorrect. Please try again.", "error")
+        return render_template("verify_result.html", status="invalid", email=email)
+
+    if email:
+        return render_template("verify_result.html", status="pending", email=email)
+    return render_template("verify_result.html", status="pending")
+
+
+@app.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    email = request.form.get("email", "").strip().lower()
+    user = User.query.filter_by(email=email).first()
+    # Always show the same message, whether or not the account exists,
+    # so the form can't be used to probe which emails are registered.
+    if user and not user.is_verified:
+        send_verification_email(user)
+    flash("If that account exists, a new verification code is on its way.", "info")
+    return redirect(url_for("verify_email", email=email))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = User.query.filter_by(email=email).first()
+
+        if not user or not check_password_hash(user.password_hash, password):
+            flash("Incorrect email or password.", "error")
+            return render_template("login.html", email=email)
+
+        if not user.is_verified:
+            flash("Verify your email before logging in.", "error")
+            return redirect(url_for("verify_sent", email=email))
+
+        session["user_id"] = user.id
+        session["user_name"] = user.full_name
+        return redirect(url_for("dashboard"))
+
+    return render_template("login.html")
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        user = User.query.filter_by(email=email).first()
+
+        # Always issue the same response whether or not the account exists,
+        # so this form can't be used to probe which emails are registered.
+        if user:
+            token = secrets.token_urlsafe(32)
+            user.reset_token = token
+            user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
+            db.session.commit()
+            send_reset_email(user, token)
+
+        flash("If an account exists for that email, a reset link is on its way.", "info")
+        return redirect(url_for("forgot_password"))
+
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    user = User.query.filter_by(reset_token=token).first()
+    token_valid = bool(
+        user and user.reset_token_expiry and user.reset_token_expiry > datetime.utcnow()
+    )
+
+    if not token_valid:
+        flash("That reset link is invalid or has expired. Request a new one below.", "error")
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        error = None
+        if not password or len(password) < 8:
+            error = "Use at least 8 characters for your new password."
+        elif password != confirm_password:
+            error = "Passwords don't match."
+
+        if error:
+            flash(error, "error")
+            return render_template("reset_password.html", token=token)
+
+        user.password_hash = generate_password_hash(password)
+        user.reset_token = None
+        user.reset_token_expiry = None
+        db.session.commit()
+
+        flash("Password updated. Log in with your new password.", "info")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html", token=token)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("index"))
+
+
+@app.route("/uploads/pic/<path:filename>")
+def serve_profile_picture(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    user = User.query.get(session["user_id"])
+    hour = datetime.utcnow().hour
+    if hour < 12:
+        greeting = "Good Morning"
+    elif hour < 17:
+        greeting = "Good Afternoon"
+    else:
+        greeting = "Good Evening"
+    first_name = (user.full_name or "there").split(" ")[0]
+    return render_template(
+        "dashboard.html",
+        user=user,
+        greeting=greeting,
+        first_name=first_name,
+        lens_configured=bool(LENS_API_KEY),
+        profile_picture_url=profile_picture_url(user),
+    )
+
+
+@app.route("/api/profile/update", methods=["POST"])
+@login_required
+def api_profile_update():
+    """Let a shopper edit their name, shopping interests, and profile photo
+    straight from Settings — no separate page reload needed."""
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"error": "Session expired — please log in again."}), 401
+
+    full_name = (request.form.get("full_name") or "").strip()
+    interests = (request.form.get("interests") or "").strip()
+
+    if full_name:
+        user.full_name = full_name
+        session["user_name"] = full_name
+    user.interests = interests or None
+
+    uploaded_file = request.files.get("profile_picture")
+    if uploaded_file and uploaded_file.filename:
+        filename = secure_filename(uploaded_file.filename)
+        if filename:
+            unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{filename}"
+            upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+            uploaded_file.save(upload_path)
+            user.profile_picture = os.path.join("pic", unique_name).replace("\\", "/")
+
+    db.session.commit()
+
+    return jsonify({
+        "full_name": user.full_name,
+        "email": user.email,
+        "interests": user.interests or "",
+        "first_name": (user.full_name or "there").split(" ")[0],
+        "profile_picture_url": profile_picture_url(user),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Dashboard data API — wishlist, price alerts, activity history, stats and
+# achievements, all persisted to the database and scoped to the logged-in
+# account. The dashboard fetches this once on load ("bootstrap") and then
+# calls the small CRUD endpoints below as the shopper interacts with it.
+# ---------------------------------------------------------------------------
+@app.route("/api/data/bootstrap")
+@login_required
+def api_data_bootstrap():
+    uid = session["user_id"]
+    wishlist = WishlistItem.query.filter_by(user_id=uid).order_by(WishlistItem.added_at.desc()).all()
+    alerts = AlertItem.query.filter_by(user_id=uid).order_by(AlertItem.created_at.desc()).all()
+    history = HistoryItem.query.filter_by(user_id=uid).order_by(HistoryItem.ts.desc()).limit(60).all()
+    achievements = Achievement.query.filter_by(user_id=uid).order_by(Achievement.unlocked_at.asc()).all()
+    stats = get_or_create_stats(uid)
+    return jsonify({
+        "wishlist": [w.to_dict() for w in wishlist],
+        "alerts": [a.to_dict() for a in alerts],
+        "history": [h.to_dict() for h in history],
+        "achievements": [a.name for a in achievements],
+        "stats": stats.to_dict(),
+    })
+
+
+@app.route("/api/wishlist", methods=["POST"])
+@login_required
+def api_wishlist_add():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    price = (body.get("price") or "—").strip() or "—"
+    if not name:
+        return jsonify({"error": "A product name is required."}), 400
+    if WishlistItem.query.filter_by(user_id=uid, name=name).first():
+        return jsonify({"error": f"{name} is already on your wishlist.", "duplicate": True}), 409
+    item = WishlistItem(id=f"w_{uid}_{int(time.time()*1000)}_{secrets.token_hex(3)}",
+                         user_id=uid, name=name, price=price)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify(item.to_dict())
+
+
+@app.route("/api/wishlist/<item_id>", methods=["DELETE"])
+@login_required
+def api_wishlist_delete(item_id):
+    uid = session["user_id"]
+    item = WishlistItem.query.filter_by(id=item_id, user_id=uid).first()
+    if item:
+        db.session.delete(item)
+        db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/alerts", methods=["POST"])
+@login_required
+def api_alerts_add():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    price = (body.get("price") or "").strip()
+    if not product or not price:
+        return jsonify({"error": "A product name and target price are required."}), 400
+    item = AlertItem(id=f"a_{uid}_{int(time.time()*1000)}_{secrets.token_hex(3)}",
+                      user_id=uid, product=product, price=price)
+    db.session.add(item)
+    db.session.commit()
+    return jsonify(item.to_dict())
+
+
+@app.route("/api/alerts/<item_id>", methods=["DELETE"])
+@login_required
+def api_alerts_delete(item_id):
+    uid = session["user_id"]
+    item = AlertItem.query.filter_by(id=item_id, user_id=uid).first()
+    if item:
+        db.session.delete(item)
+        db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/history", methods=["POST"])
+@login_required
+def api_history_add():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    type_ = (body.get("type") or "activity").strip()[:40]
+    text = (body.get("text") or "").strip()[:500]
+    if not text:
+        return jsonify({"error": "Nothing to log."}), 400
+    item = HistoryItem(user_id=uid, type=type_, text=text)
+    db.session.add(item)
+    db.session.commit()
+    # Keep only the most recent 60 entries per user so the table doesn't
+    # grow unbounded — mirrors the old client-side `.slice(0, 60)` cap.
+    stale = (HistoryItem.query.filter_by(user_id=uid)
+             .order_by(HistoryItem.ts.desc()).offset(60).all())
+    for s in stale:
+        db.session.delete(s)
+    if stale:
+        db.session.commit()
+    return jsonify(item.to_dict())
+
+
+@app.route("/api/history", methods=["DELETE"])
+@login_required
+def api_history_clear():
+    uid = session["user_id"]
+    HistoryItem.query.filter_by(user_id=uid).delete()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/stats/bump", methods=["POST"])
+@login_required
+def api_stats_bump():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    field = (body.get("field") or "").strip()
+    amount = body.get("amount", 1)
+    if field not in ("saved", "searches", "accepted"):
+        return jsonify({"error": "Unknown stat field."}), 400
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        amount = 1
+    stats = get_or_create_stats(uid)
+    setattr(stats, field, (getattr(stats, field) or 0) + amount)
+    db.session.commit()
+    return jsonify(stats.to_dict())
+
+
+@app.route("/api/stats/category", methods=["POST"])
+@login_required
+def api_stats_category():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "A category name is required."}), 400
+    stats = get_or_create_stats(uid)
+    cats = stats.categories
+    cats[name] = (cats.get(name) or 0) + 1
+    stats.categories = cats
+    db.session.commit()
+    return jsonify(stats.to_dict())
+
+
+@app.route("/api/achievements", methods=["POST"])
+@login_required
+def api_achievements_unlock():
+    uid = session["user_id"]
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "An achievement name is required."}), 400
+    if Achievement.query.filter_by(user_id=uid, name=name).first():
+        return jsonify({"unlocked": False, "name": name})
+    db.session.add(Achievement(user_id=uid, name=name))
+    db.session.commit()
+    return jsonify({"unlocked": True, "name": name})
+
+
+@app.route("/api/data/clear", methods=["DELETE"])
+@login_required
+def api_data_clear():
+    """Wipe all persisted dashboard data for this account (wishlist,
+    alerts, history, achievements, stats) — the DB-backed replacement for
+    the old 'clear local storage' settings action."""
+    uid = session["user_id"]
+    WishlistItem.query.filter_by(user_id=uid).delete()
+    AlertItem.query.filter_by(user_id=uid).delete()
+    HistoryItem.query.filter_by(user_id=uid).delete()
+    Achievement.query.filter_by(user_id=uid).delete()
+    UserStats.query.filter_by(user_id=uid).delete()
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# AI Buying Intelligence API (Groq-powered, "Lens" branded)
+# ---------------------------------------------------------------------------
+def _lens_error_response(exc):
+    app.logger.error("Lens engine error: %s", exc)
+    return jsonify({"error": str(exc)}), 502
+
+
+@app.route("/api/ai/chat/stream", methods=["POST"])
+@login_required
+def api_ai_chat_stream():
+    """Streaming AI Shopping Assistant — Server-Sent Events. Accepts an
+    optional inline image (base64) so a shopper can drop a photo straight
+    into the conversation instead of only using the separate Scanner."""
+    body = request.get_json(force=True, silent=True) or {}
+    history = body.get("history", [])  # [{role: 'user'|'model', text: '...'}]
+    message = (body.get("message") or "").strip()
+    image_b64 = body.get("image")
+    image_mime = (body.get("image_mime_type") or "image/jpeg").strip()
+
+    if not message and not image_b64:
+        return jsonify({"error": "Message is required."}), 400
+
+    contents = [{"role": h.get("role"), "parts": [{"text": h.get("text", "")}]} for h in history]
+
+    parts = []
+    if message:
+        parts.append({"text": message})
+    if image_b64:
+        parts.append({"inline_data": {"mime_type": image_mime, "data": image_b64}})
+        if not message:
+            parts.insert(0, {"text": "Identify what's in this photo and give me buying advice on it."})
+    contents.append({"role": "user", "parts": parts})
+
+    # Photos require the vision-capable model; text-only chat keeps using
+    # the (cheaper/faster) text model.
+    chat_model = GROQ_VISION_MODEL if image_b64 else None
+
+    if not LENS_API_KEY:
+        def _no_key():
+            yield f"data: {json.dumps({'text': '⚠️ Lens\u2019 AI engine is not configured on the server right now. Add a GROQ_API_KEY to your environment to activate live AI answers.'})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        return Response(stream_with_context(_no_key()), mimetype="text/event-stream")
+
+    return Response(
+        stream_with_context(lens_stream(contents, system_instruction=build_system_prompt(), model=chat_model)),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/fx/usd-ngn")
+@login_required
+def api_fx_usd_ngn():
+    """Live USD -> NGN rate, fetched (and cached) from a free FX API — used by
+    the dashboard to show a trustworthy rate instead of one the AI guesses."""
+    return jsonify({"rate": get_usd_to_ngn_rate(), "pair": "USD/NGN"})
+
+
+@app.route("/api/ai/search", methods=["POST"])
+@login_required
+def api_ai_search():
+    """Natural-language product search -> structured verdict + candidate picks."""
+    body = request.get_json(force=True, silent=True) or {}
+    query = (body.get("query") or "").strip()
+    if not query:
+        return jsonify({"error": "A search query is required."}), 400
+
+    prompt = f"""A shopper searched: "{query}"
+
+Respond with ONLY JSON matching this exact shape, no markdown fences:
+{{
+  "interpretation": "one sentence describing what you understood the shopper wants",
+  "verdict": "2-3 sentence buying verdict / advice",
+  "picks": [
+    {{"name": "product name", "price_estimate": "e.g. \\u20a6450,000 - \\u20a6520,000", "tag": "Best Overall | Best Value | Best Long-Term | Premium Pick", "why": "1-2 sentence reasoning", "pros": ["..","..)"], "cons": ["..",".."]}}
+  ]
+}}
+Provide exactly 3 picks, realistic and specific to the query (real-world plausible models/specs), tailored to Nigerian market pricing in Naira if relevant, otherwise a sensible currency."""
+
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+        )
+        data = enrich_picks(data)
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/recommend", methods=["POST"])
+@login_required
+def api_ai_recommend():
+    """Budget/need based recommendation engine."""
+    body = request.get_json(force=True, silent=True) or {}
+    need = (body.get("need") or "").strip()
+    budget = (body.get("budget") or "").strip()
+    currency = (body.get("currency") or "NGN").strip()
+    if not need:
+        return jsonify({"error": "Tell Lens what you're shopping for."}), 400
+
+    prompt = f"""Shopper need: "{need}"
+Budget: {budget or 'not specified'} {currency}
+
+Return ONLY JSON, no markdown fences:
+{{
+  "summary": "2 sentence framing of the recommendation",
+  "picks": [
+    {{"rank": 1, "name": "..", "price": "..", "tag": "Best Overall", "performance": "short note", "battery": "short note", "value": "short note", "long_term": "short note", "why": "2 sentence reasoning"}},
+    {{"rank": 2, "name": "..", "price": "..", "tag": "Best Value", "performance": "..", "battery": "..", "value": "..", "long_term": "..", "why": ".."}},
+    {{"rank": 3, "name": "..", "price": "..", "tag": "Best Long-Term", "performance": "..", "battery": "..", "value": "..", "long_term": "..", "why": ".."}}
+  ]
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+        )
+        data = enrich_picks(data)
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/compare", methods=["POST"])
+@login_required
+def api_ai_compare():
+    body = request.get_json(force=True, silent=True) or {}
+    products = [p.strip() for p in body.get("products", []) if p and p.strip()]
+    if len(products) < 2:
+        return jsonify({"error": "Give Lens at least two products to compare."}), 400
+
+    prompt = f"""Compare these products for a shopper: {', '.join(products)}
+
+Return ONLY JSON, no markdown fences:
+{{
+  "products": ["name1", "name2", ...],
+  "rows": [
+    {{"spec": "Price", "values": ["..", "..", ".."]}},
+    {{"spec": "Performance", "values": ["..", "..", ".."]}},
+    {{"spec": "Battery", "values": ["..", "..", ".."]}},
+    {{"spec": "Camera / Display", "values": ["..", "..", ".."]}},
+    {{"spec": "Build & Repairability", "values": ["..", "..", ".."]}},
+    {{"spec": "Resale / Long-term value", "values": ["..", "..", ".."]}}
+  ],
+  "winner": "name of the best overall pick",
+  "verdict": "2-3 sentence explanation of the winner and key tradeoffs"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        names = data.get("products") or products
+        data["product_links"] = {nm: marketplace_links(nm) for nm in names}
+        data["product_images_query"] = {nm: nm for nm in names}
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/reviews", methods=["POST"])
+@login_required
+def api_ai_reviews():
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens summarize reviews for?"}), 400
+
+    prompt = f"""Summarize the general review sentiment for: "{product}"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "confidence_score": 0-100 integer,
+  "verdict": "Buy | Wait | Consider Alternatives",
+  "loves": ["short phrase", "short phrase", "short phrase"],
+  "dislikes": ["short phrase", "short phrase", "short phrase"],
+  "common_issues": ["short phrase", "short phrase"],
+  "summary": "2-3 sentence overall verdict on whether to buy"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/scam-check", methods=["POST"])
+@login_required
+def api_ai_scam_check():
+    body = request.get_json(force=True, silent=True) or {}
+    url_or_listing = (body.get("url") or "").strip()
+    if not url_or_listing:
+        return jsonify({"error": "Paste a listing URL or description to check."}), 400
+
+    prompt = f"""A shopper wants a scam-risk assessment of this listing/URL: "{url_or_listing}"
+
+You cannot actually browse it, so reason from domain patterns, naming conventions, typical
+red flags in URLs/listings (misspelled brand domains, unusual TLDs, too-good pricing framing,
+no HTTPS conventions implied, generic marketplace patterns, etc). Be transparent this is a
+heuristic read, not a live scan.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "risk_score": 0-100 integer (higher = riskier),
+  "risk_label": "Low Risk | Moderate Risk | High Risk",
+  "red_flags": ["short flag", "short flag", "short flag"],
+  "green_flags": ["short reassuring point", "short reassuring point"],
+  "domain_notes": "1-2 sentence note on the domain/URL pattern",
+  "pricing_notes": "1-2 sentence note on pricing plausibility if mentioned",
+  "safety_tips": ["short actionable tip", "short actionable tip", "short actionable tip"],
+  "summary": "2 sentence overall guidance"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+            temperature=0.4,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/vision", methods=["POST"])
+@login_required
+def api_ai_vision():
+    """AI Camera / barcode scanner — Lens Vision analysis of an uploaded image."""
+    uploaded = request.files.get("image")
+    mode = (request.form.get("mode") or "product").strip()  # 'product' | 'barcode'
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "Attach an image to scan."}), 400
+
+    mime_type = uploaded.mimetype or "image/jpeg"
+    image_bytes = uploaded.read()
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    if mode == "barcode":
+        instruction = (
+            "Look closely for any barcode/UPC/QR code in this image. Read its digits if legible. "
+            "Then identify the product it most likely belongs to."
+        )
+    else:
+        instruction = "Identify the product shown in this image in detail."
+
+    prompt = f"""{instruction}
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product_name": "..",
+  "brand": "..",
+  "category": "..",
+  "estimated_price": "e.g. \\u20a6250,000 - \\u20a6300,000",
+  "barcode_digits": "digits if visible, else empty string",
+  "specs": ["short spec", "short spec", "short spec"],
+  "summary": "2-3 sentence description of what's in the image and its condition/notable traits",
+  "recommendations": ["short buying tip", "short buying tip"],
+  "alternatives": ["alternative product name", "alternative product name"]
+}}"""
+
+    contents = [{
+        "role": "user",
+        "parts": [
+            {"text": prompt},
+            {"inline_data": {"mime_type": mime_type, "data": b64}},
+        ],
+    }]
+    try:
+        data = lens_generate_json(contents, system_instruction=build_system_prompt(),
+                                     model=GROQ_VISION_MODEL, temperature=0.4)
+        data = enrich_single(data, "product_name")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/price-history", methods=["POST"])
+@login_required
+def api_ai_price_history():
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product's price trend should Lens explain?"}), 400
+
+    prompt = f"""Give a plausible 12-month relative price-index trend (100 = today's price, so
+past months are typically >100 if prices have been falling, or model whatever realistic pattern
+fits the product category) for: "{product}"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "trend": [{{"month": "Jan", "index": 100}}, ... 12 entries ending at "this month"],
+  "best_time_to_buy": "short recommendation",
+  "expected_movement": "1-2 sentence prediction for the next 8-12 weeks",
+  "seasonal_notes": "1-2 sentence note on seasonal patterns for this category"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/product-images", methods=["POST"])
+@login_required
+def api_ai_product_images():
+    """Return a small multi-angle photo gallery for a named product, so the
+    shopper can 'spin' and inspect it visually before Lens even talks pricing."""
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "A product name is required."}), 400
+    gallery = fetch_product_images(name)
+    return jsonify({
+        "query": name,
+        "images": gallery,
+        "marketplace_links": marketplace_links(name),
+    })
+
+
+@app.route("/api/memory/profile")
+@login_required
+def api_memory_profile():
+    """AI Shopping Memory — a heuristic (no AI call) read of this account's
+    stored wishlist/history/stats, surfaced as plain-language preferences."""
+    return jsonify(build_memory_profile(session["user_id"]))
+
+
+@app.route("/api/ai/negotiate", methods=["POST"])
+@login_required
+def api_ai_negotiate():
+    """AI Negotiator — reads a listing's asking price, estimates fair market
+    value, and drafts an opening negotiation message the shopper can send."""
+    body = request.get_json(force=True, silent=True) or {}
+    listing = (body.get("listing") or "").strip()
+    if not listing:
+        return jsonify({"error": "Paste the listing (price + description) to negotiate."}), 400
+
+    prompt = f"""A shopper is about to negotiate on this listing:
+\"\"\"{listing}\"\"\"
+
+Estimate the seller's asking price, a realistic market value range, a smart opening
+offer, and draft a short, polite negotiation message the shopper could send as-is.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "seller_price": "e.g. \\u20a6950,000",
+  "market_low": "e.g. \\u20a6780,000",
+  "market_high": "e.g. \\u20a6840,000",
+  "recommended_offer": "e.g. \\u20a6790,000",
+  "negotiation_chance": 0-100 integer,
+  "reasoning": "1-2 sentence explanation of the offer strategy",
+  "message": "a friendly, ready-to-send negotiation message, under 60 words"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.5,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/fake-listing", methods=["POST"])
+@login_required
+def api_ai_fake_listing():
+    """Fake Listing / Authenticity Detector — heuristic read of a pasted
+    listing for common counterfeit/scam-listing red flags."""
+    body = request.get_json(force=True, silent=True) or {}
+    listing = (body.get("listing") or "").strip()
+    if not listing:
+        return jsonify({"error": "Paste the listing text/description to check."}), 400
+
+    prompt = f"""Assess how authentic/genuine this listing looks (not a live scan — reason
+from the text itself: pricing plausibility, description patterns, wording that reads
+copy-pasted from a manufacturer page, urgency language, seller-account cues if mentioned):
+\"\"\"{listing}\"\"\"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "authenticity_score": 0-100 integer,
+  "risk_label": "Low | Medium | High",
+  "checks": [
+    {{"status": "good", "note": "short observation"}},
+    {{"status": "warn", "note": "short observation"}},
+    {{"status": "good", "note": "short observation"}}
+  ],
+  "summary": "1-2 sentence overall read"
+}}
+Include 3-6 checks total, mixing "good" and "warn" statuses based on what's actually
+plausible from the text — don't invent seller-account-age or reverse-image-search
+findings you have no basis for; only flag what the text itself supports."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.4,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/shopping-agent", methods=["POST"])
+@login_required
+def api_ai_shopping_agent():
+    """AI Shopping Agent — simulates checking multiple marketplaces and
+    returns the single best deal found, framed as an autonomous search."""
+    body = request.get_json(force=True, silent=True) or {}
+    need = (body.get("need") or "").strip()
+    budget = (body.get("budget") or "").strip()
+    currency = (body.get("currency") or "NGN").strip()
+    if not need:
+        return jsonify({"error": "Tell Lens what to go find."}), 400
+
+    stores = ["Jumia", "Konga", "Amazon", "AliExpress", "eBay", "Temu"]
+    prompt = f"""Shopper wants: "{need}"
+Budget: {budget or 'not specified'} {currency}
+
+Simulate checking these marketplaces: {', '.join(stores)}. Return your single best
+overall deal recommendation (product + store + price), plus a fair market price to
+compare it against so savings can be shown.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "exact product name/model",
+  "best_store": "one of: {', '.join(stores)}",
+  "best_price": "e.g. \\u20a61,520,000",
+  "market_price": "e.g. \\u20a61,660,000",
+  "savings": "e.g. \\u20a6140,000",
+  "delivery_estimate": "e.g. 10-14 days",
+  "warranty": "short note on typical warranty for this store/product",
+  "why_this_store": "1-2 sentence reasoning"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+        )
+        data["stores_checked"] = stores
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/budget-planner", methods=["POST"])
+@login_required
+def api_ai_budget_planner():
+    """AI Budget Planner — splits a lump budget across a shopping goal's
+    typical component list, leaving a realistic remainder."""
+    body = request.get_json(force=True, silent=True) or {}
+    budget = (body.get("budget") or "").strip()
+    currency = (body.get("currency") or "NGN").strip()
+    goal = (body.get("goal") or "").strip()
+    if not budget or not goal:
+        return jsonify({"error": "Tell Lens the goal and the total budget."}), 400
+
+    prompt = f"""Shopper's goal: "{goal}"
+Total budget: {budget} {currency}
+
+Break this budget into the realistic list of items typically needed for this goal,
+each with an estimated cost, so the total (items + remaining) equals the full budget.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "goal": "{goal}",
+  "total_budget": "{budget} {currency}",
+  "items": [
+    {{"name": "..", "price": "e.g. \\u20a6700,000"}},
+    {{"name": "..", "price": ".."}}
+  ],
+  "remaining": "e.g. \\u20a675,000",
+  "notes": "1-2 sentence tip on where to spend more/less"
+}}
+Keep the item list to 4-7 realistic items for this goal."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/buy-or-wait", methods=["POST"])
+@login_required
+def api_ai_buy_or_wait():
+    """Buy or Wait Predictor — current price vs. fair market value, a
+    predicted 30-day price movement, and a clear buy-now-or-wait call
+    with an estimated savings figure if waiting pays off."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens predict on?"}), 400
+
+    prompt = f"""Should a shopper buy this now or wait: "{product}"
+
+Reason from typical product-cycle patterns (recency of release, category price-decay
+curves, known refresh cycles, seasonal sales windows) — you have no live pricing feed,
+so frame every number here as a considered estimate, not a fact.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "current_price": "e.g. \\u20a6850,000 (a realistic current retail estimate)",
+  "fair_market_value": "e.g. \\u20a6790,000 (what it should reasonably cost)",
+  "predicted_30d_movement_pct": a signed number like -8 or 3 (negative = price expected to fall),
+  "verdict": "BUY | WAIT",
+  "recommendation": "short actionable line, e.g. 'Wait 2-3 weeks' or 'Buy now'",
+  "confidence": 0-100 integer,
+  "reason": "2-3 sentence explanation grounded in product-cycle/pricing logic",
+  "estimated_savings": "e.g. \\u20a668,000, or 'Minimal' if verdict is BUY"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.5,
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/scam-messages", methods=["POST"])
+@login_required
+def api_ai_scam_messages():
+    """Scam Message Detector — reads pasted chat/WhatsApp messages from a
+    seller for manipulation and scam red flags."""
+    body = request.get_json(force=True, silent=True) or {}
+    messages = (body.get("messages") or "").strip()
+    if not messages:
+        return jsonify({"error": "Paste the seller's messages to check."}), 400
+
+    prompt = f"""Assess these seller messages for scam risk (reasoning from tone, urgency,
+payment-before-inspection requests, refusal to video call, and similar patterns —
+only flag what the text actually shows):
+\"\"\"{messages}\"\"\"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "scam_probability": 0-100 integer,
+  "reasons": ["short flag", "short flag", "short flag"],
+  "recommendation": "1-2 sentence action the shopper should take"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.3,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/lifespan", methods=["POST"])
+@login_required
+def api_ai_lifespan():
+    """Product Life Expectancy — typical lifespan, repairability, and
+    expected resale value down the line for a named product."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens estimate lifespan for?"}), 400
+
+    prompt = f"""Estimate the realistic long-term ownership profile of: "{product}"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "average_lifespan": "e.g. 7 years",
+  "battery_cycles": "e.g. 1000 cycles, or 'N/A' if not battery-powered",
+  "repairability": "e.g. 8.5/10",
+  "software_support": "e.g. Updates expected until ~2034",
+  "resale_after_3y": "e.g. \\u20a6650,000, framed as an estimate"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/deal-hunter", methods=["POST"])
+@login_required
+def api_ai_deal_hunter():
+    """AI Deal Hunter — a small daily digest of plausible deals, tailored
+    toward the shopper's stated interests / shopping memory when available."""
+    user = User.query.get(session["user_id"])
+    interests = (user.interests if user else "") or "general electronics"
+    memory = build_memory_profile(session["user_id"])
+
+    prompt = f"""Generate a short "today's deals" digest for a shopper interested in:
+{interests}
+{"Known preferences: " + "; ".join(memory["notes"]) if memory["notes"] else ""}
+
+Frame these as realistic, plausible current deals for this category (clearly estimates,
+not scraped live listings).
+
+Return ONLY JSON, no markdown fences:
+{{
+  "deals": [
+    {{"name": "..", "detail": "e.g. '21% OFF' or '\\u20a680,000 cheaper than usual'", "urgency": "e.g. 'Flash sale ends in 2 hours', or empty string"}},
+    {{"name": "..", "detail": "..", "urgency": ""}},
+    {{"name": "..", "detail": "..", "urgency": ""}}
+  ]
+}}
+Exactly 3 deals."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.8,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/resale-predictor", methods=["POST"])
+@login_required
+def api_ai_resale_predictor():
+    """AI Resale Predictor — projects a product's value at 1/2/3 years out
+    from its purchase price."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    buy_price = (body.get("buy_price") or "").strip()
+    currency = (body.get("currency") or "NGN").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens predict resale value for?"}), 400
+
+    prompt = f"""Project resale value over time for: "{product}"
+{"Purchase price: " + buy_price + " " + currency if buy_price else "Assume a realistic current retail price."}
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "buy_price": "e.g. \\u20a61,800,000",
+  "value_1y": "e.g. \\u20a61,520,000",
+  "value_2y": "e.g. \\u20a61,310,000",
+  "value_3y": "e.g. \\u20a61,050,000",
+  "depreciation_label": "Low | Moderate | High",
+  "notes": "1-2 sentence explanation of the depreciation curve for this category"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/compatibility", methods=["POST"])
+@login_required
+def api_ai_compatibility():
+    """AI Compatibility Checker — checks a part against a freeform
+    description of the shopper's existing PC build."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    system_desc = (body.get("system") or "").strip()
+    if not product or not system_desc:
+        return jsonify({"error": "Give Lens the part and a description of your current PC."}), 400
+
+    prompt = f"""A shopper wants to add this part: "{product}"
+Their current system: "{system_desc}"
+
+Check compatibility against the parts they mentioned (CPU/PSU/case/motherboard/RAM,
+whichever they gave you) and estimate any upgrade cost needed.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "part": "{product}",
+  "checks": [
+    {{"component": "PSU", "status": "compatible | needs_upgrade | unknown", "note": "short note"}},
+    {{"component": "Case", "status": "compatible | needs_upgrade | unknown", "note": "short note"}},
+    {{"component": "Motherboard", "status": "compatible | needs_upgrade | unknown", "note": "short note"}}
+  ],
+  "estimated_upgrade_cost": "e.g. \\u20a665,000, or 'None needed'",
+  "summary": "1-2 sentence overall verdict"
+}}
+Only include components the shopper actually mentioned or that are clearly relevant;
+mark status "unknown" rather than guessing if info is missing."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(), temperature=0.4,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/timeline", methods=["POST"])
+@login_required
+def api_ai_timeline():
+    """AI Product Timeline — a short release-to-now history for a product,
+    rendered as a vertical timeline in the UI."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens map a timeline for?"}), 400
+
+    prompt = f"""Build a short timeline of notable moments for: "{product}"
+(release, notable price changes, known issues/fixes, and a verdict on the best time
+to buy relative to now).
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "events": [
+    {{"year": "2023", "label": "Released"}},
+    {{"year": "2024", "label": "Price dropped ~12%"}},
+    {{"year": "2025", "label": "..."}},
+    {{"year": "2026", "label": "Best time to buy"}}
+  ]
+}}
+3-6 events, chronological, last one should be a present-day verdict."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/community", methods=["POST"])
+@login_required
+def api_ai_community():
+    """AI Buyer Community — a plausible aggregate-owner-sentiment snapshot
+    for a product (clearly framed as an estimate, not scraped reviews)."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens summarize owner sentiment for?"}), 400
+
+    prompt = f"""Estimate typical owner sentiment for: "{product}", framed as if summarizing
+a community of past buyers (this is a plausible estimate from general review sentiment
+patterns you know about this category/product, not a live scrape — be transparent
+about that if asked, but the numbers here should just read as a clean snapshot).
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "recommend_pct": 0-100 integer,
+  "most_common_complaint": "short phrase",
+  "most_loved_feature": "short phrase",
+  "summary": "1-2 sentence overall read"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/score", methods=["POST"])
+@login_required
+def api_ai_score():
+    """AI Shopping Score — a multi-axis scorecard (value/performance/
+    repairability/future-proofing) for a named product."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Lens score?"}), 400
+
+    prompt = f"""Score this product across key buying dimensions: "{product}"
+
+Return ONLY JSON, no markdown fences:
+{{
+  "product": "{product}",
+  "value": 0.0-10.0,
+  "performance": 0.0-10.0,
+  "repairability": 0.0-10.0,
+  "future_proof": 0.0-10.0,
+  "overall": 0.0-10.0,
+  "summary": "1 sentence justifying the overall score"
+}}"""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(),
+        )
+        data = enrich_single(data, "product")
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+@app.route("/api/ai/copilot", methods=["POST"])
+@login_required
+def api_ai_copilot():
+    """AI Shopping Copilot — turns a life situation ("moving into my first
+    apartment") into a full categorized shopping plan with a buy order."""
+    body = request.get_json(force=True, silent=True) or {}
+    situation = (body.get("situation") or "").strip()
+    budget = (body.get("budget") or "").strip()
+    currency = (body.get("currency") or "NGN").strip()
+    if not situation:
+        return jsonify({"error": "Describe the situation you're shopping for."}), 400
+
+    prompt = f"""A shopper describes their situation: "{situation}"
+{"Budget: " + budget + " " + currency if budget else "No specific budget given — plan sensibly."}
+
+Build a full categorized shopping plan: group items into logical categories (e.g. rooms,
+or phases), rate each item's priority, estimate a total cost, and suggest a sensible
+buy order across a few weeks/phases so the shopper doesn't buy everything at once.
+
+Return ONLY JSON, no markdown fences:
+{{
+  "categories": [
+    {{"name": "Living Room", "items": [{{"name": "TV", "priority": 1-5}}, {{"name": "Sofa", "priority": 1-5}}]}},
+    {{"name": "Kitchen", "items": [{{"name": "Microwave", "priority": 1-5}}]}}
+  ],
+  "estimated_cost": "e.g. \\u20a62,850,000",
+  "buy_order": [
+    {{"phase": "Week 1", "items": ["Mattress", "Microwave"]}},
+    {{"phase": "Week 2", "items": ["Sofa", "TV"]}}
+  ]
+}}
+3-5 categories, 2-4 items each; buy order should cover all items across 2-4 phases,
+essentials first."""
+    try:
+        data = lens_generate_json(
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+            temperature=0.6,
+        )
+        return jsonify(data)
+    except Exception as exc:
+        return _lens_error_response(exc)
+
+
+if __name__ == "__main__":
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)

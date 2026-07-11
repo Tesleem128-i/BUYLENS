@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BuyLens — Never Regret a Purchase</title>
+<meta name="description" content="BuyLens is the AI buying intelligence platform. Scan it. Know it. Never regret it.">
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+</head>
+<body>
+
+<!-- Background canvas: particle field + AI orb -->
+<canvas id="bg-canvas"></canvas>
+<div class="grain"></div>
+
+<!-- Progress + nav -->
+<div class="scroll-progress"><div class="scroll-progress__bar" id="progress-bar"></div></div>
+
+<nav class="nav">
+  <div class="nav__mark">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="nav__logo-img">BUYLENS
+  </div>
+  <div class="nav__links">
+    <a href="#scanner">Scanner</a>
+    <a href="#intel">Intelligence</a>
+    <a href="#trust">Trust</a>
+    <a href="#begin" class="nav__cta">Begin</a>
+  </div>
+</nav>
+
+<!-- ============ 00 : THE VOID / EYE OPENING ============ -->
+<section class="scene scene--void" id="void">
+  <div class="void__eye" id="ai-eye">
+    <div class="void__iris"></div>
+    <div class="void__pupil"></div>
+    <div class="void__ring void__ring--1"></div>
+    <div class="void__ring void__ring--2"></div>
+  </div>
+  <div class="void__reveal">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="logo-img logo-img--void">
+    <h1 class="logo-reveal">BUY<span>LENS</span></h1>
+    <p class="tagline-reveal">Never Regret a Purchase.</p>
+  </div>
+  <div class="scroll-cue">
+    <span>Scroll to enter</span>
+    <div class="scroll-cue__line"></div>
+  </div>
+</section>
+
+<!-- ============ 01 : THE CITY (categories) ============ -->
+<section class="scene scene--city" id="city">
+  <div class="city__label eyebrow">The Buying Universe</div>
+  <h2 class="scene-title">One lens.<br>Every category.</h2>
+  <p class="scene-sub">BuyLens isn't a shopping app. It's the operating system for buying anything — phones, cars, homes, flights, insurance, and everything between.</p>
+
+  <div class="city-grid" id="city-grid">
+    <div class="city-block" data-cat="Electronics"><span class="city-block__icon">◈</span><span>Electronics</span></div>
+    <div class="city-block" data-cat="Vehicles"><span class="city-block__icon">◆</span><span>Vehicles</span></div>
+    <div class="city-block" data-cat="Fashion"><span class="city-block__icon">◇</span><span>Fashion</span></div>
+    <div class="city-block" data-cat="Homes"><span class="city-block__icon">▲</span><span>Homes</span></div>
+    <div class="city-block" data-cat="Travel"><span class="city-block__icon">◎</span><span>Travel</span></div>
+    <div class="city-block" data-cat="Insurance"><span class="city-block__icon">◉</span><span>Insurance</span></div>
+    <div class="city-block" data-cat="Gaming"><span class="city-block__icon">◐</span><span>Gaming</span></div>
+    <div class="city-block" data-cat="Groceries"><span class="city-block__icon">◑</span><span>Groceries</span></div>
+  </div>
+</section>
+
+<!-- ============ 02 : THE AI ORB / PROMPT ============ -->
+<section class="scene scene--ask" id="ask">
+  <div class="ask__orb-wrap">
+    <div class="ask__orb" id="ask-orb"></div>
+  </div>
+  <h2 class="scene-title scene-title--center">What are you<br>buying today?</h2>
+  <form class="ask__form" id="ask-form" autocomplete="off">
+    <input type="text" id="ask-input" placeholder="Gaming laptop, iPhone 16, an apartment in Lagos…" />
+    <button type="submit">Analyze</button>
+  </form>
+  <div class="ask__chips">
+    <button class="chip" data-val="Gaming laptop">Gaming laptop</button>
+    <button class="chip" data-val="iPhone">iPhone</button>
+    <button class="chip" data-val="Sneakers">Sneakers</button>
+    <button class="chip" data-val="Apartment">Apartment</button>
+    <button class="chip" data-val="Car">Car</button>
+  </div>
+  <p class="ask__response" id="ask-response"></p>
+</section>
+
+<!-- ============ 03 : PROBLEM -> SOLUTION STORY ============ -->
+<section class="scene scene--story" id="story">
+  <div class="story__track">
+
+    <div class="story__panel has-image" data-panel="problem">
+      <div class="panel-copy">
+        <div class="eyebrow">The Problem</div>
+        <h3>Forty tabs.<br>Zero confidence.</h3>
+        <p>Comparing prices across stores. Digging through fake reviews. Wondering if the "deal" is even real. Buying used to mean guessing.</p>
+        <div class="story__scatter">
+          <span>17 tabs open</span><span>312 reviews unread</span><span>4 price tiers</span><span>???  authenticity</span>
+        </div>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/problem.png') }}" alt="The problem: buying chaos" class="panel-image">
+      </div>
+    </div>
+
+    <div class="story__panel has-image" data-panel="solution">
+      <div class="panel-copy">
+        <div class="eyebrow">BuyLens Arrives</div>
+        <h3>One AI.<br>Every answer.</h3>
+        <p>The chaos collapses into a single lens. One search reaches every store, every review, every signal — and hands you a verdict.</p>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/solution.png') }}" alt="BuyLens resolves the chaos" class="panel-image">
+      </div>
+    </div>
+
+    <div class="story__panel has-image" data-panel="compare">
+      <div class="panel-copy">
+        <div class="eyebrow">Price Intelligence</div>
+        <h3>Stores orbit.<br>The best price glows.</h3>
+        <div class="price-orbit" id="price-orbit">
+          <div class="price-orbit__center">Product</div>
+          <div class="price-orbit__store" style="--i:0">Store A<b>$1,249</b></div>
+          <div class="price-orbit__store" style="--i:1">Store B<b>$1,189</b></div>
+          <div class="price-orbit__store" style="--i:2">Store C<b>$1,299</b></div>
+          <div class="price-orbit__store price-orbit__store--best" style="--i:3">Store D<b>$1,102</b></div>
+        </div>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/Intellegence.png') }}" alt="Price intelligence" class="panel-image">
+      </div>
+    </div>
+
+    <div class="story__panel has-image" data-panel="reviews">
+      <div class="panel-copy">
+        <div class="eyebrow">Review Intelligence</div>
+        <h3>Thousands of voices.<br>One verdict.</h3>
+        <div class="review-merge">
+          <div class="review-merge__particles" id="review-particles"></div>
+          <div class="review-verdict">
+            <div class="review-verdict__row"><span>Build quality</span><b class="pos">Strong</b></div>
+            <div class="review-verdict__row"><span>Battery life</span><b class="neg">Weak</b></div>
+            <div class="review-verdict__row"><span>Value</span><b class="pos">Excellent</b></div>
+            <div class="review-verdict__score">AI Verdict — <span>8.6 / 10</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/Intellegence.png') }}" alt="Review intelligence" class="panel-image">
+      </div>
+    </div>
+
+    <div class="story__panel has-image" data-panel="authenticity">
+      <div class="panel-copy">
+        <div class="eyebrow">Authenticity Scan</div>
+        <h3>Real, verified<br>before you pay.</h3>
+        <div class="scan-box">
+          <div class="scan-box__product"></div>
+          <div class="scan-line"></div>
+          <div class="scan-box__result">Confidence: <span>97.2%</span> Genuine</div>
+        </div>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/scan.png') }}" alt="Authenticity scan" class="panel-image">
+      </div>
+    </div>
+
+    <div class="story__panel" data-panel="history">
+      <div class="eyebrow">Price History</div>
+      <h3>A timeline<br>that predicts.</h3>
+      <div class="timeline" id="timeline">
+        <svg viewBox="0 0 600 160" preserveAspectRatio="none">
+          <polyline id="timeline-past" points="0,120 100,110 200,90 300,100 400,70 460,60" />
+          <polyline id="timeline-future" points="460,60 520,50 600,20" stroke-dasharray="4 6"/>
+        </svg>
+        <span class="timeline__tag timeline__tag--now">Today</span>
+        <span class="timeline__tag timeline__tag--future">Predicted drop · 3 weeks</span>
+      </div>
+    </div>
+
+    <div class="story__panel has-image" data-panel="recommend">
+      <div class="panel-copy">
+        <div class="eyebrow">AI Recommendations</div>
+        <h3>The AI thinks.<br>Three options emerge.</h3>
+        <div class="rec-grid">
+          <div class="rec-card"><div class="rec-card__rank">01</div><h4>Best Overall</h4><p>Balanced spec sheet, verified reviews, stable pricing.</p></div>
+          <div class="rec-card"><div class="rec-card__rank">02</div><h4>Best Value</h4><p>90% of the performance, 60% of the price.</p></div>
+          <div class="rec-card"><div class="rec-card__rank">03</div><h4>Best Long-Term</h4><p>Slower price decay, stronger resale history.</p></div>
+        </div>
+      </div>
+      <div class="panel-visual">
+        <img src="{{ url_for('static', filename='img/reconmendation.png') }}" alt="AI recommendations" class="panel-image">
+      </div>
+    </div>
+
+  </div>
+  <div class="story__dots" id="story-dots"></div>
+</section>
+
+<!-- ============ 04 : AI SCANNER FEATURE (hero feature) ============ -->
+<section class="scene scene--scanner" id="scanner">
+  <div class="eyebrow">The Main Attraction</div>
+  <h2 class="scene-title">Point. Scan.<br>Know everything.</h2>
+  <div class="scanner-stage">
+    <div class="scanner-phone">
+      <div class="scanner-phone__notch"></div>
+      <div class="scanner-phone__grid"></div>
+      <div class="scanner-phone__laser"></div>
+      <div class="scanner-phone__label">Identifying product…</div>
+    </div>
+    <ul class="scanner-features">
+      <li><b>01</b> Identify any product instantly</li>
+      <li><b>02</b> Find the best price, everywhere</li>
+      <li><b>03</b> Compare every store at once</li>
+      <li><b>04</b> Summarize thousands of reviews</li>
+      <li><b>05</b> Detect counterfeits before checkout</li>
+      <li><b>06</b> Recommend smarter alternatives</li>
+      <li><b>07</b> Track full price history</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 05 : ABOUT / TRUST PANELS ============ -->
+<section class="scene scene--about" id="trust">
+  <div class="eyebrow">Why Trust BuyLens</div>
+  <h2 class="scene-title">Built to be<br>believed.</h2>
+  <div class="panel-grid">
+    <div class="glass-panel"><h4>Mission</h4><p>Help people make smarter buying decisions before spending money.</p></div>
+    <div class="glass-panel"><h4>Vision</h4><p>Become the world's AI buying intelligence platform.</p></div>
+    <div class="glass-panel"><h4>Technology</h4><p>Multi-model AI trained on pricing, reviews, and authenticity signals across the open web.</p></div>
+    <div class="glass-panel"><h4>Privacy</h4><p>Your searches are yours. We analyze products, not people.</p></div>
+    <div class="glass-panel"><h4>Transparency</h4><p>Every recommendation shows its reasoning — no black box verdicts.</p></div>
+    <div class="glass-panel"><h4>Future</h4><p>From gadgets to homes, insurance to flights — one lens for every purchase.</p></div>
+  </div>
+</section>
+
+<!-- ============ 06 : WHY BUYLENS STATS ============ -->
+<section class="scene scene--stats" id="stats">
+  <div class="stat"><span class="stat__num" data-count="4.9">0</span><span class="stat__label">Trillion $ spent online yearly</span></div>
+  <div class="stat"><span class="stat__num" data-count="22">0</span><span class="stat__label">% of listings flagged as counterfeit-risk</span></div>
+  <div class="stat"><span class="stat__num" data-count="6.5">0</span><span class="stat__label">Hours wasted comparing, per shopper/year</span></div>
+  <div class="stat stat--solved"><span class="stat__num stat__num--text">Solved</span><span class="stat__label">by one lens.</span></div>
+</section>
+
+<!-- ============ 07 : FINAL / GET STARTED ============ -->
+<section class="scene scene--final" id="begin">
+  <canvas id="final-canvas"></canvas>
+  <div class="final__content">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="logo-img logo-img--final">
+    <h2 class="logo-reveal logo-reveal--final">BUY<span>LENS</span></h2>
+    <p class="tagline-reveal">Never Regret a Purchase.</p>
+    <div class="final__actions">
+      <a class="cta-glow" href="{{ url_for('login') }}">Login</a>
+      <a class="cta-glow cta-glow--secondary" href="{{ url_for('signup') }}">Signup</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <span>© 2026 BuyLens. AI Buying Intelligence.</span>
+  <span>Lagos · Remote-first</span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

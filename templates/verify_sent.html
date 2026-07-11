@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Check your email — BuyLens</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+
+<div class="auth-glow"></div>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+
+<div class="auth-card">
+  <div class="auth-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#4CE0FF" stroke-width="1.6">
+      <path d="M3 6h18v12H3z"/>
+      <path d="M3 6l9 7 9-7"/>
+    </svg>
+  </div>
+
+  <div class="auth-eyebrow">One Last Step</div>
+  <h1 class="auth-title">Check your email.</h1>
+  <p class="auth-sub">
+    We sent a 6-digit verification code to <b>{{ email }}</b>. Enter it below to activate your account, then come back and log in.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="auth-flash auth-flash--{{ 'error' if category == 'error' else 'info' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form class="auth-verify" method="POST" action="{{ url_for('verify_email') }}">
+    <input type="email" name="email" value="{{ email }}" required hidden>
+    <input type="text" name="code" placeholder="000000" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" required autofocus>
+    <button type="submit">Verify code</button>
+  </form>
+
+  <form class="auth-resend" method="POST" action="{{ url_for('resend_verification') }}">
+    <input type="email" name="email" value="{{ email }}" required hidden>
+    <button type="submit">Resend code</button>
+  </form>
+
+  <p class="auth-switch">Already verified? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BuyLens — Dashboard</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body class="os-body" data-lens="{{ 'on' if lens_configured else 'off' }}" data-user="{{ first_name }}">
+
+<script type="application/json" id="buylens-user-data">
+{
+  "fullName": {{ (user.full_name or "")|tojson }},
+  "firstName": {{ first_name|tojson }},
+  "email": {{ (user.email or "")|tojson }},
+  "interests": {{ (user.interests or "")|tojson }},
+  "profilePictureUrl": {{ (profile_picture_url or "")|tojson }}
+}
+</script>
+
+<canvas id="os-canvas"></canvas>
+<div class="grain"></div>
+
+<div class="os">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="rail" id="rail">
+    <div class="rail__mark">
+      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="rail__logo">
+      <span class="rail__word">BUYLENS</span>
+    </div>
+
+    <nav class="rail__nav" id="rail-nav">
+      <button class="rail__item is-active" data-view="home">
+        <span class="rail__icon">◈</span><span class="rail__label">Dashboard</span>
+      </button>
+      <button class="rail__item" data-view="assistant">
+        <span class="rail__icon">✦</span><span class="rail__label">AI Assistant</span>
+      </button>
+      <button class="rail__item" data-view="search">
+        <span class="rail__icon">◎</span><span class="rail__label">Search</span>
+      </button>
+      <button class="rail__item" data-view="scanner">
+        <span class="rail__icon">▣</span><span class="rail__label">Scanner</span>
+      </button>
+      <button class="rail__item" data-view="compare">
+        <span class="rail__icon">⇄</span><span class="rail__label">Compare</span>
+      </button>
+      <button class="rail__item" data-view="wishlist">
+        <span class="rail__icon">♡</span><span class="rail__label">Wishlist</span>
+      </button>
+      <button class="rail__item" data-view="alerts">
+        <span class="rail__icon">◔</span><span class="rail__label">Price Alerts</span>
+      </button>
+      <button class="rail__item" data-view="history">
+        <span class="rail__icon">↺</span><span class="rail__label">History</span>
+      </button>
+      <button class="rail__item" data-view="saved">
+        <span class="rail__icon">▤</span><span class="rail__label">Saved Products</span>
+      </button>
+      <button class="rail__item" data-view="recommend">
+        <span class="rail__icon">◐</span><span class="rail__label">Recommendations</span>
+      </button>
+      <button class="rail__item" data-view="analytics">
+        <span class="rail__icon">▲</span><span class="rail__label">Analytics</span>
+      </button>
+      <button class="rail__item" data-view="copilot">
+        <span class="rail__icon">🧠</span><span class="rail__label">AI Copilot</span>
+      </button>
+
+      <div class="rail__divider"></div>
+
+      <button class="rail__item" data-view="settings">
+        <span class="rail__icon">⚙</span><span class="rail__label">Settings</span>
+      </button>
+      <button class="rail__item" data-view="profile">
+        <span class="rail__icon">◉</span><span class="rail__label">Profile</span>
+      </button>
+    </nav>
+
+    <a class="rail__exit" href="{{ url_for('logout') }}">
+      <span class="rail__icon">⏻</span><span class="rail__label">Log Out</span>
+    </a>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <div class="stage">
+
+    <!-- TOP BAR -->
+    <header class="bar">
+      <button class="bar__burger" id="burger" aria-label="Toggle menu"><span></span><span></span><span></span></button>
+
+      <form class="bar__search" id="bar-search-form">
+        <span class="bar__search-icon">◎</span>
+        <input type="text" id="bar-search-input" placeholder="Ask Lens anything — gaming laptop under $1000, RTX 5090, apartment in Lagos…" autocomplete="off">
+        <button type="button" class="bar__icon-btn" id="bar-voice-btn" title="Voice search">◐</button>
+        <button type="button" class="bar__icon-btn" id="bar-cam-btn" title="Camera scan">▣</button>
+      </form>
+
+      <div class="bar__actions">
+        <button class="bar__bell" id="bell-btn" title="Notifications">
+          ◔<span class="bar__bell-dot"></span>
+        </button>
+        <div class="bar__user" id="user-menu-btn">
+          <div class="bar__avatar" id="bar-avatar">
+            {% if profile_picture_url %}<img src="{{ profile_picture_url }}" alt="{{ first_name }}">{% else %}{{ first_name[:1]|upper }}{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="notif-panel" id="notif-panel">
+        <div class="notif-panel__head">Signals</div>
+        <div class="notif-panel__list" id="notif-list"></div>
+      </div>
+    </header>
+
+    <!-- ============ VIEWS ============ -->
+    <main class="views" id="views">
+
+      <!-- ---------- HOME ---------- -->
+      <section class="view is-active" id="view-home">
+        <div class="greet">
+          <div class="greet__text">
+            <div class="greet__eyebrow">{{ greeting }}, {{ first_name }}.</div>
+            <h1 class="greet__title">Ready to make<br>smarter purchases?</h1>
+          </div>
+          <div class="orb" id="home-orb">
+            <div class="orb__core"></div>
+            <div class="orb__ring orb__ring--1"></div>
+            <div class="orb__ring orb__ring--2"></div>
+          </div>
+        </div>
+
+        <div class="grid grid--insights">
+          <div class="glass card card--stat">
+            <span class="card__label">Money Saved</span>
+            <span class="card__num" id="stat-saved">₦0</span>
+            <span class="card__sub">via BuyLens price intelligence</span>
+          </div>
+          <div class="glass card card--stat">
+            <span class="card__label">Searches Run</span>
+            <span class="card__num" id="stat-searches">0</span>
+            <span class="card__sub">natural-language queries</span>
+          </div>
+          <div class="glass card card--stat">
+            <span class="card__label">Wishlist</span>
+            <span class="card__num" id="stat-wishlist">0</span>
+            <span class="card__sub">products being tracked</span>
+          </div>
+          <div class="glass card card--stat">
+            <span class="card__label">Active Alerts</span>
+            <span class="card__num" id="stat-alerts">0</span>
+            <span class="card__sub">watching for price drops</span>
+          </div>
+        </div>
+
+        <div class="grid grid--split">
+          <div class="glass panel">
+            <div class="panel__head">
+              <h3>Today's Insight</h3>
+              <span class="eyebrow-mini">Lens</span>
+            </div>
+            <p class="panel__body" id="insight-text">Ask Lens something in the assistant, or run a search — insights will appear here as you shop.</p>
+          </div>
+          <div class="glass panel">
+            <div class="panel__head">
+              <h3>Trending Right Now</h3>
+              <span class="eyebrow-mini">Live</span>
+            </div>
+            <ul class="trend-list">
+              <li><span>iPhone 17 Pro</span><b>▲ 12%</b></li>
+              <li><span>RTX 5080 laptops</span><b>▲ 8%</b></li>
+              <li><span>Compact EVs</span><b>▼ 3%</b></li>
+              <li><span>Noise-cancelling earbuds</span><b>▲ 21%</b></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="glass panel">
+          <div class="panel__head">
+            <h3>Recent Searches</h3>
+            <span class="eyebrow-mini" id="recent-count">0</span>
+          </div>
+          <div class="recent-list" id="recent-list">
+            <p class="empty-note">Nothing yet — your recent searches will land here.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- AI ASSISTANT ---------- -->
+      <section class="view" id="view-assistant">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">AI Shopping Assistant</div>
+            <h2>Talk to Lens.</h2>
+          </div>
+          <button class="ghost-btn" id="chat-clear-btn">New chat</button>
+        </div>
+
+        <div class="chat glass">
+          <div class="chat__log" id="chat-log">
+            <div class="chat__msg chat__msg--model">
+              <div class="chat__avatar chat__avatar--model">L</div>
+              <div class="chat__bubble">
+                Hi, I'm <b>Lens</b>. Tell me what you're buying, your budget, or paste a product to compare — I'll reason through it like a very well-informed friend who's obsessed with specs and pricing.
+              </div>
+            </div>
+          </div>
+          <div class="chat__attach-preview" id="chat-attach-preview" hidden>
+            <img id="chat-attach-thumb" alt="Attached image">
+            <button type="button" id="chat-attach-remove" aria-label="Remove attached image">✕</button>
+          </div>
+          <form class="chat__form" id="chat-form">
+            <input type="file" id="chat-image-input" accept="image/*" hidden>
+            <button type="button" class="chat__mic" id="chat-attach-btn" title="Attach an image">📎</button>
+            <button type="button" class="chat__mic" id="chat-mic-btn" title="Voice input">◐</button>
+            <textarea id="chat-input" rows="1" placeholder="I have ₦800,000 — recommend a laptop for AI and gaming…"></textarea>
+            <button type="submit" class="chat__send" id="chat-send-btn">↑</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- ---------- SEARCH ---------- -->
+      <section class="view" id="view-search">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Global AI Search</div>
+            <h2>What are you buying today?</h2>
+          </div>
+        </div>
+
+        <form class="search-hero glass" id="search-form">
+          <span class="search-hero__icon">◎</span>
+          <input type="text" id="search-input" placeholder="Gaming laptop under $1000, best phone for photography, RTX 5090…">
+          <button type="submit">Analyze</button>
+        </form>
+        <div class="chip-row">
+          <button class="chip" data-val="Gaming laptop under $1000">Gaming laptop under $1000</button>
+          <button class="chip" data-val="Best phone for photography">Best phone for photography</button>
+          <button class="chip" data-val="RTX 5090">RTX 5090</button>
+          <button class="chip" data-val="2-bedroom apartment in Lagos">Apartment in Lagos</button>
+        </div>
+
+        <div id="search-results" class="search-results"></div>
+      </section>
+
+      <!-- ---------- SCANNER ---------- -->
+      <section class="view" id="view-scanner">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">AI Camera &amp; Barcode</div>
+            <h2>Point. Scan. Know everything.</h2>
+          </div>
+          <div class="seg" id="scan-mode-seg">
+            <button class="seg__opt is-active" data-mode="product">Product</button>
+            <button class="seg__opt" data-mode="barcode">Barcode</button>
+          </div>
+        </div>
+
+        <div class="scan-grid">
+          <div class="scanner-col">
+            <label class="scanner glass" id="scan-drop">
+              <input type="file" id="scan-file" accept="image/*" hidden>
+              <div class="scanner__frame" id="scanner-frame">
+                <img id="scan-preview" class="scanner__preview" alt="">
+                <div class="scanner__notch"></div>
+                <div class="scanner__grid"></div>
+                <div class="scanner__laser" id="scanner-laser"></div>
+                <div class="scanner__label" id="scanner-label">Drop an image or click to scan</div>
+              </div>
+            </label>
+            <button type="button" class="ghost-btn scanner__cam-btn" id="scan-camera-btn">📷 Use camera to snap a photo</button>
+          </div>
+
+          <div class="glass panel scan-result" id="scan-result">
+            <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Lens Vision</span></div>
+            <p class="empty-note">Upload a product photo or a barcode image — Lens will identify it, estimate pricing, and suggest alternatives.</p>
+          </div>
+        </div>
+
+        <div class="cam-modal" id="cam-modal" hidden>
+          <div class="cam-modal__backdrop" id="cam-modal-backdrop"></div>
+          <div class="cam-modal__frame glass">
+            <video id="cam-video" autoplay playsinline muted></video>
+            <canvas id="cam-canvas" hidden></canvas>
+            <div class="cam-modal__actions">
+              <button type="button" class="ghost-btn" id="cam-cancel-btn">Cancel</button>
+              <button type="button" class="chat__send cam-modal__shutter" id="cam-shoot-btn" title="Capture">◉</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- COMPARE ---------- -->
+      <section class="view" id="view-compare">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Price &amp; Spec Intelligence</div>
+            <h2>Put two or three products head to head.</h2>
+          </div>
+        </div>
+
+        <form class="compare-form glass" id="compare-form">
+          <input type="text" placeholder="Product A — e.g. iPhone 16 Pro" id="compare-a" required>
+          <input type="text" placeholder="Product B — e.g. Samsung S25 Ultra" id="compare-b" required>
+          <input type="text" placeholder="Product C (optional)" id="compare-c">
+          <button type="submit">Compare</button>
+        </form>
+
+        <div id="compare-results"></div>
+      </section>
+
+      <!-- ---------- WISHLIST ---------- -->
+      <section class="view" id="view-wishlist">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Tracked Products</div>
+            <h2>Your wishlist.</h2>
+          </div>
+          <button class="ghost-btn" id="wishlist-add-btn">+ Add product</button>
+        </div>
+        <div class="card-grid" id="wishlist-grid"></div>
+      </section>
+
+      <!-- ---------- PRICE ALERTS ---------- -->
+      <section class="view" id="view-alerts">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Price Alerts</div>
+            <h2>Tell Lens what price to watch for.</h2>
+          </div>
+        </div>
+        <form class="alert-form glass" id="alert-form">
+          <input type="text" placeholder="Product name" id="alert-product" required>
+          <input type="text" placeholder="Target price (e.g. ₦450,000)" id="alert-price" required>
+          <button type="submit">Create Alert</button>
+        </form>
+        <div class="card-grid" id="alerts-grid"></div>
+      </section>
+
+      <!-- ---------- HISTORY ---------- -->
+      <section class="view" id="view-history">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Activity</div>
+            <h2>Everything you've asked Lens.</h2>
+          </div>
+          <button class="ghost-btn" id="history-clear-btn">Clear history</button>
+        </div>
+        <div class="history-list" id="history-list"></div>
+      </section>
+
+      <!-- ---------- SAVED PRODUCTS ---------- -->
+      <section class="view" id="view-saved">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Library</div>
+            <h2>Saved products.</h2>
+          </div>
+        </div>
+        <div class="card-grid" id="saved-grid"></div>
+      </section>
+
+      <!-- ---------- RECOMMENDATIONS ---------- -->
+      <section class="view" id="view-recommend">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">AI Recommendations</div>
+            <h2>Tell Lens the need and the budget.</h2>
+          </div>
+        </div>
+        <form class="recommend-form glass" id="recommend-form">
+          <input type="text" id="rec-need" placeholder="What are you shopping for? e.g. laptop for AI and gaming" required>
+          <div class="recommend-form__row">
+            <input type="text" id="rec-budget" placeholder="Budget, e.g. 800,000">
+            <select id="rec-currency">
+              <option value="NGN">NGN ₦</option>
+              <option value="USD">USD $</option>
+              <option value="GBP">GBP £</option>
+              <option value="EUR">EUR €</option>
+            </select>
+            <button type="submit">Recommend</button>
+          </div>
+          <p class="fx-hint" id="fx-hint"></p>
+        </form>
+        <div id="recommend-results"></div>
+      </section>
+
+      <!-- ---------- ANALYTICS ---------- -->
+      <section class="view" id="view-analytics">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Your Buying Analytics</div>
+            <h2>How you shop with BuyLens.</h2>
+          </div>
+        </div>
+        <div class="grid grid--insights">
+          <div class="glass card card--stat"><span class="card__label">Saved</span><span class="card__num" id="an-saved">₦0</span><span class="card__sub">total across all purchases</span></div>
+          <div class="glass card card--stat"><span class="card__label">Searches</span><span class="card__num" id="an-searches">0</span><span class="card__sub">this month</span></div>
+          <div class="glass card card--stat"><span class="card__label">Recs Accepted</span><span class="card__num" id="an-accepted">0</span><span class="card__sub">out of Lens's picks</span></div>
+          <div class="glass card card--stat"><span class="card__label">Top Category</span><span class="card__num card__num--text" id="an-category">—</span><span class="card__sub">most searched</span></div>
+        </div>
+        <div class="grid grid--split">
+          <div class="glass panel"><div class="panel__head"><h3>Searches over time</h3></div><canvas id="chart-searches" height="180"></canvas></div>
+          <div class="glass panel"><div class="panel__head"><h3>Category breakdown</h3></div><canvas id="chart-categories" height="180"></canvas></div>
+        </div>
+      </section>
+
+      <!-- ---------- AI COPILOT TOOLS ---------- -->
+      <section class="view" id="view-copilot">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">AI Copilot Tools</div>
+            <h2>Fifteen ways Lens goes beyond search.</h2>
+          </div>
+        </div>
+
+        <div class="glass panel copilot-memory">
+          <div class="panel__head"><h3>🧠 AI Shopping Memory</h3></div>
+          <p class="copilot-memory__sub">What Lens has picked up about how you shop, from your searches and wishlist.</p>
+          <div id="copilot-memory-notes" class="memory-notes"><p class="empty-note">Loading…</p></div>
+        </div>
+
+        <div class="tool-grid" id="tool-grid"></div>
+      </section>
+
+      <!-- ---------- SETTINGS ---------- -->
+      <section class="view" id="view-settings">
+        <div class="view-head"><div><div class="eyebrow-mini">Preferences</div><h2>Settings.</h2></div></div>
+
+        <div class="glass panel settings-panel settings-panel--profile">
+          <div class="panel__head"><h3>Your info</h3><span class="eyebrow-mini">Editable</span></div>
+          <form id="profile-edit-form" class="profile-edit">
+            <label class="profile-edit__pic" id="profile-edit-pic-btn" title="Change profile picture">
+              <div class="profile-avatar profile-avatar--sm" id="settings-avatar">
+                {% if profile_picture_url %}<img src="{{ profile_picture_url }}" alt="{{ first_name }}">{% else %}{{ first_name[:1]|upper }}{% endif %}
+              </div>
+              <span class="profile-edit__pic-edit">Change</span>
+              <input type="file" id="profile-edit-pic-input" accept="image/*" hidden>
+            </label>
+            <div class="profile-edit__fields">
+              <div class="profile-edit__row">
+                <label for="profile-edit-name">Full name</label>
+                <input type="text" id="profile-edit-name" value="{{ user.full_name }}" required>
+              </div>
+              <div class="profile-edit__row">
+                <label for="profile-edit-email">Email</label>
+                <input type="email" id="profile-edit-email" value="{{ user.email }}" disabled title="Contact support to change your email">
+              </div>
+              <div class="profile-edit__row">
+                <label for="profile-edit-interests">Shopping interests</label>
+                <input type="text" id="profile-edit-interests" placeholder="e.g. Electronics, Tech, Gadgets" value="{{ user.interests or '' }}">
+                <span class="profile-edit__hint">Comma-separated — used to personalize your wishlist and recommendations.</span>
+              </div>
+              <button type="submit" class="auth-submit-alt" id="profile-edit-save">Save changes</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="glass panel settings-panel">
+          <div class="settings-row">
+            <div><b>Theme</b><span>Choose how BuyLens looks.</span></div>
+            <div class="seg" id="theme-seg">
+              <button class="seg__opt is-active" data-theme="void">Void</button>
+              <button class="seg__opt" data-theme="aurora">Aurora</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div><b>Notifications</b><span>Price drop &amp; deal alerts.</span></div>
+            <label class="toggle"><input type="checkbox" id="toggle-notifs" checked><span></span></label>
+          </div>
+          <div class="settings-row">
+            <div><b>Voice shopping</b><span>Allow microphone for voice search.</span></div>
+            <label class="toggle"><input type="checkbox" id="toggle-voice" checked><span></span></label>
+          </div>
+          <div class="settings-row">
+            <div><b>Language</b><span>Interface language.</span></div>
+            <select id="lang-select">
+              <option>English</option>
+              <option>Français</option>
+              <option>Hausa</option>
+              <option>Yorùbá</option>
+              <option>Igbo</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <div><b>Two-factor authentication</b><span>Add an extra layer of security.</span></div>
+            <label class="toggle"><input type="checkbox" id="toggle-2fa"><span></span></label>
+          </div>
+          <div class="settings-row settings-row--danger">
+            <div><b>Delete account</b><span>Permanently remove your BuyLens account and data.</span></div>
+            <button class="danger-btn" id="delete-account-btn">Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- PROFILE ---------- -->
+      <section class="view" id="view-profile">
+        <div class="view-head"><div><div class="eyebrow-mini">You</div><h2>Profile.</h2></div></div>
+
+        <div class="glass panel profile-panel">
+          <div class="profile-panel__top">
+            <div class="profile-avatar" id="profile-avatar">
+              {% if profile_picture_url %}<img src="{{ profile_picture_url }}" alt="{{ first_name }}">{% else %}{{ first_name[:1]|upper }}{% endif %}
+            </div>
+            <div>
+              <h3 id="profile-name">{{ user.full_name }}</h3>
+              <span class="muted">{{ user.email }}</span>
+              <div class="profile-interests" id="profile-interests">{{ user.interests or "No shopping interests set yet — add them in Settings." }}</div>
+            </div>
+          </div>
+          <div class="grid grid--insights">
+            <div class="card card--stat card--flat"><span class="card__label">Money Saved</span><span class="card__num" id="pf-saved">₦0</span></div>
+            <div class="card card--stat card--flat"><span class="card__label">Products Searched</span><span class="card__num" id="pf-searched">0</span></div>
+            <div class="card card--stat card--flat"><span class="card__label">Favorite Category</span><span class="card__num card__num--text" id="pf-category">—</span></div>
+            <div class="card card--stat card--flat"><span class="card__label">Achievements</span><span class="card__num" id="pf-achievements">0</span></div>
+          </div>
+          <div class="achv-row" id="achv-row"></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast-stack" id="toast-stack"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

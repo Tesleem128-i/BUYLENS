@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ 'Email verified' if status == 'success' else 'Verification code' }} — BuyLens</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+
+<div class="auth-glow"></div>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+
+<div class="auth-card">
+  {% if status == 'pending' %}
+    <div class="auth-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#4CE0FF" stroke-width="1.8">
+        <path d="M4 7h16v10H4z"/>
+        <path d="M4 7l8 6 8-6"/>
+      </svg>
+    </div>
+    <div class="auth-eyebrow">Verify Your Email</div>
+    <h1 class="auth-title">Enter the code we sent.</h1>
+    <p class="auth-sub">Use the 6-digit code from your email to activate your account.</p>
+    <form class="auth-verify" method="POST" action="{{ url_for('verify_email') }}">
+      <input type="email" name="email" value="{{ email or '' }}" required hidden>
+      <input type="text" name="code" placeholder="000000" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" required autofocus>
+      <button type="submit">Verify code</button>
+    </form>
+
+  {% elif status == 'success' %}
+    <div class="auth-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#4CE0FF" stroke-width="1.8">
+        <path d="M4 12.5l5 5 11-11"/>
+      </svg>
+    </div>
+    <div class="auth-eyebrow">Verified</div>
+    <h1 class="auth-title">Email confirmed.</h1>
+    <p class="auth-sub">Your account is active. You can log in now and start scanning.</p>
+    <a href="{{ url_for('login') }}" class="auth-submit" style="display:block;text-align:center;text-decoration:none;">Log in</a>
+
+  {% elif status == 'expired' %}
+    <div class="auth-icon auth-icon--error">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ff8b8b" stroke-width="1.8">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M12 7v5l3 3"/>
+      </svg>
+    </div>
+    <div class="auth-eyebrow">Code Expired</div>
+    <h1 class="auth-title">That code timed out.</h1>
+    <p class="auth-sub">Verification codes expire after 24 hours. Request a new one below.</p>
+    <form class="auth-resend" method="POST" action="{{ url_for('resend_verification') }}">
+      <input type="email" name="email" placeholder="you@example.com" required>
+      <button type="submit">Resend code</button>
+    </form>
+
+  {% else %}
+    <div class="auth-icon auth-icon--error">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ff8b8b" stroke-width="1.8">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </div>
+    <div class="auth-eyebrow">Invalid Code</div>
+    <h1 class="auth-title">We couldn't verify that.</h1>
+    <p class="auth-sub">That code was incorrect or has already been used. Try again below.</p>
+    <form class="auth-verify" method="POST" action="{{ url_for('verify_email') }}">
+      <input type="email" name="email" value="{{ email or '' }}" required hidden>
+      <input type="text" name="code" placeholder="000000" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" required autofocus>
+      <button type="submit">Try again</button>
+    </form>
+
+    <form class="auth-resend" method="POST" action="{{ url_for('resend_verification') }}">
+      <input type="email" name="email" value="{{ email or '' }}" required hidden>
+      <button type="submit">Resend code</button>
+    </form>
+  {% endif %}
+
+  <p class="auth-switch">Need help? <a href="{{ url_for('signup') }}">Create a new account</a></p>
+</div>
+
+</body>
+</html>

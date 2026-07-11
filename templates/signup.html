@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create your account — BuyLens</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+
+<div class="auth-glow"></div>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+
+<div class="auth-card">
+  <div class="auth-card__mark">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens">
+    <span>BUY<b>LENS</b></span>
+  </div>
+
+  <div class="auth-eyebrow">Get Started</div>
+  <h1 class="auth-title">Create your account.</h1>
+  <p class="auth-sub">One lens for every purchase. Sign up to save scans, track prices, and get AI verdicts.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="auth-flash auth-flash--{{ 'error' if category == 'error' else 'info' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form class="auth-form" method="POST" action="{{ url_for('signup') }}" enctype="multipart/form-data">
+    <div class="auth-field">
+      <label for="full_name">Full name</label>
+      <input type="text" id="full_name" name="full_name" placeholder="Ada Lovelace" value="{{ full_name or '' }}" required>
+    </div>
+    <div class="auth-field">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@example.com" value="{{ email or '' }}" required>
+    </div>
+    <div class="auth-field">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="At least 8 characters" minlength="8" required>
+    </div>
+    <div class="auth-field">
+      <label for="confirm_password">Confirm password</label>
+      <input type="password" id="confirm_password" name="confirm_password" placeholder="Re-enter your password" minlength="8" required>
+    </div>
+    <div class="auth-field">
+      <label for="profile_picture">Profile picture</label>
+      <input type="file" id="profile_picture" name="profile_picture" accept="image/*">
+    </div>
+    <div class="auth-field">
+      <label for="interest">Interests</label>
+      <input type="text" id="interest" name="interest" placeholder="Gaming, Travel, Tech" value="{{ interest or '' }}">
+    </div>
+
+    <button type="submit" class="auth-submit">Create account</button>
+  </form>
+
+  <p class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+
+</body>
+</html>
