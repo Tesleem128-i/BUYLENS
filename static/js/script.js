@@ -5,6 +5,66 @@ gsap.registerPlugin(ScrollTrigger);
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------------------------------------------------------------
+   0. Intro: lens calibration boot sequence (plays once on load)
+--------------------------------------------------------------- */
+(function introSequence(){
+  const intro = document.getElementById('intro');
+  if(!intro) return;
+
+  const finish = () => {
+    intro.remove();
+    document.documentElement.style.overflow = '';
+  };
+
+  document.documentElement.style.overflow = 'hidden';
+
+  if(reduceMotion){
+    setTimeout(finish, 200);
+    return;
+  }
+
+  const scrambleEl = document.getElementById('intro-scramble');
+  const statusEl = document.getElementById('intro-status');
+  const barEl = document.getElementById('intro-bar');
+  const finalText = 'BUYLENS';
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%◆◈◇▲◎◉0123456789';
+  const totalFrames = 22;
+  let frame = 0;
+
+  function scrambleTick(){
+    frame++;
+    let out = '';
+    for(let i = 0; i < finalText.length; i++){
+      const revealAt = ((i + 1) / finalText.length) * totalFrames;
+      out += frame >= revealAt ? finalText[i] : glyphs[Math.floor(Math.random() * glyphs.length)];
+    }
+    if(scrambleEl) scrambleEl.textContent = out;
+    if(frame < totalFrames) setTimeout(scrambleTick, 30);
+  }
+  scrambleTick();
+
+  const statuses = ['CALIBRATING LENS', 'SCANNING MARKET SIGNAL', 'CROSS-REFERENCING REVIEWS', 'LOCKED'];
+  let statusIdx = 0;
+  const statusInterval = setInterval(() => {
+    statusIdx++;
+    if(statusIdx < statuses.length && statusEl) statusEl.textContent = statuses[statusIdx];
+    else clearInterval(statusInterval);
+  }, 460);
+
+  requestAnimationFrame(() => {
+    if(barEl){
+      barEl.style.transition = 'width 1.85s cubic-bezier(.4,0,.2,1)';
+      barEl.style.width = '100%';
+    }
+  });
+
+  setTimeout(() => {
+    intro.classList.add('is-opening');
+    setTimeout(finish, 1300);
+  }, 1950);
+})();
+
+/* ---------------------------------------------------------------
    1. Ambient particle starfield (fixed background canvas)
 --------------------------------------------------------------- */
 (function starfield(){
@@ -168,6 +228,21 @@ document.querySelectorAll('.city-block').forEach(block => {
   const track = document.querySelector('.story__track');
   const panels = gsap.utils.toArray('.story__panel');
   const dotsWrap = document.getElementById('story-dots');
+  const isMobile = window.matchMedia('(max-width: 900px)').matches;
+
+  if(isMobile){
+    /* Mobile: no horizontal pin — panels are normal vertical sections.
+       Just reveal each panel's content as it scrolls into view. */
+    panels.forEach(panel => {
+      gsap.fromTo(panel.querySelectorAll('.eyebrow, h3, p, .story__scatter, .price-orbit, .review-merge, .scan-box, .timeline, .rec-grid, .panel-image'),
+        { opacity:0, y:24 },
+        {
+          opacity:1, y:0, duration:0.6, stagger:0.08, ease:'power2.out',
+          scrollTrigger:{ trigger: panel, start:'top 82%', toggleActions:'play none none reverse' }
+        });
+    });
+    return;
+  }
 
   panels.forEach((_, i) => {
     const dot = document.createElement('span');
@@ -273,4 +348,3 @@ document.querySelectorAll('.stat__num[data-count]').forEach(el => {
   });
   window.addEventListener('resize', resize);
 })();
-

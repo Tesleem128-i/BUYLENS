@@ -41,6 +41,77 @@ body{
 
 ::selection{ background:var(--violet); color:var(--void); }
 
+/* ============================================================
+   INTRO — LENS CALIBRATION BOOT SEQUENCE
+   A camera-aperture wipe: 8 shutter blades retract from center,
+   revealing the void scene beneath, while a scramble-text HUD
+   "calibrates" the lens. Plays once per page load.
+   ============================================================ */
+.intro{
+  position:fixed; inset:0; z-index:200;
+  display:flex; align-items:center; justify-content:center;
+}
+.intro__blade{
+  position:fixed; inset:-25%;
+  background:var(--void);
+  clip-path:polygon(50% 50%, 100% 0%, 100% 100%);
+  transform:rotate(calc(var(--i) * 45deg));
+  transform-origin:50% 50%;
+  transition:
+    transform 1.15s cubic-bezier(.76,0,.2,1) calc(var(--i) * 0.045s),
+    opacity .7s ease calc(.35s + var(--i) * .045s);
+  z-index:101;
+  will-change:transform, opacity;
+}
+.intro.is-opening .intro__blade{
+  transform:rotate(calc(var(--i) * 45deg + 70deg)) scale(2.8);
+  opacity:0;
+}
+.intro__hud{
+  position:relative; z-index:102;
+  display:flex; flex-direction:column; align-items:center; gap:16px;
+  transition:opacity .5s ease;
+  padding:0 6vw; text-align:center;
+}
+.intro.is-opening .intro__hud{ opacity:0; }
+.intro__scramble{
+  font-family:var(--display); font-weight:700;
+  font-size:clamp(1.9rem, 7vw, 3.6rem);
+  letter-spacing:.08em; color:var(--ink);
+  text-shadow:0 0 26px rgba(76,224,255,.55), 2px 0 rgba(255,70,120,.45), -2px 0 rgba(76,224,255,.45);
+}
+.intro__status{
+  font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--cyan); min-height:1.4em;
+}
+.intro__bar{ width:220px; max-width:56vw; height:2px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
+.intro__bar-fill{ display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--cyan),var(--violet)); box-shadow:0 0 12px var(--cyan); }
+.intro__brackets{ position:fixed; inset:0; z-index:102; pointer-events:none; transition:opacity .5s ease; }
+.intro.is-opening .intro__brackets{ opacity:0; }
+.intro__bracket{
+  position:absolute; width:34px; height:34px; border:2px solid var(--cyan);
+  opacity:0; animation:bracketIn .8s cubic-bezier(.2,.8,.2,1) forwards;
+}
+.intro__bracket--tl{ top:8vh; left:6vw; border-right:none; border-bottom:none; animation-delay:.05s; }
+.intro__bracket--tr{ top:8vh; right:6vw; border-left:none; border-bottom:none; animation-delay:.12s; }
+.intro__bracket--bl{ bottom:8vh; left:6vw; border-right:none; border-top:none; animation-delay:.12s; }
+.intro__bracket--br{ bottom:8vh; right:6vw; border-left:none; border-top:none; animation-delay:.05s; }
+@keyframes bracketIn{ from{ opacity:0; transform:scale(1.7); } to{ opacity:.7; transform:scale(1); } }
+.intro__flash{ position:fixed; inset:0; z-index:103; background:#fff; opacity:0; pointer-events:none; }
+.intro.is-opening .intro__flash{ animation:flashPop .6s ease-out .9s forwards; }
+@keyframes flashPop{ 0%{opacity:0;} 10%{opacity:.9;} 100%{opacity:0;} }
+
+@media (max-width:600px){
+  .intro__bracket{ width:20px; height:20px; }
+  .intro__bracket--tl, .intro__bracket--tr{ top:5vh; }
+  .intro__bracket--bl, .intro__bracket--br{ bottom:5vh; }
+  .intro__bracket--tl, .intro__bracket--bl{ left:5vw; }
+  .intro__bracket--tr, .intro__bracket--br{ right:5vw; }
+}
+@media (prefers-reduced-motion: reduce){
+  .intro__blade, .intro__hud, .intro__brackets, .intro__flash{ transition:none !important; animation:none !important; }
+}
+
 /* ---------- background canvas ---------- */
 #bg-canvas{
   position:fixed; inset:0; width:100%; height:100%;
@@ -77,6 +148,10 @@ body{
 .nav__cta:hover{ border-color:var(--cyan); box-shadow:0 0 16px rgba(76,224,255,.25); }
 
 @media (max-width:760px){ .nav__links a:not(.nav__cta){ display:none; } }
+@media (max-width:600px){
+  .nav{ padding:18px 5vw; }
+  .scene{ padding:11vh 6vw; }
+}
 
 /* ---------- shared scene / type ---------- */
 .scene{
@@ -160,6 +235,17 @@ body{
 .scroll-cue__line{ width:1px; height:36px; background:linear-gradient(var(--cyan), transparent); animation:cueMove 1.8s ease-in-out infinite; }
 @keyframes cueMove{ 0%{ opacity:0; transform:translateY(-6px);} 40%{opacity:1;} 100%{ opacity:0; transform:translateY(10px);} }
 
+@media (max-width:600px){
+  .void__eye{ width:96px; height:96px; }
+  .void__iris{ width:76px; height:76px; }
+  .void__pupil{ width:24px; height:24px; }
+  .void__ring--1, .void__ring--2{ width:120px; height:120px; }
+  @keyframes ringExpand{
+    0%{ width:100px; height:100px; opacity:.9; }
+    100%{ width:340px; height:340px; opacity:0; }
+  }
+}
+
 /* ============================================================
    01 — CITY GRID
    ============================================================ */
@@ -224,6 +310,13 @@ body{
 .chip:hover{ color:var(--ink); border-color:var(--cyan); }
 .ask__response{ margin-top:28px; min-height:1.6em; color:var(--cyan); font-family:var(--mono); font-size:.95rem; }
 
+@media (max-width:600px){
+  .ask__orb{ width:88px; height:88px; }
+  .ask__form{ flex-direction:column; border-radius:22px; padding:10px; gap:8px; }
+  .ask__form input{ padding:10px 14px; }
+  .ask__form button{ width:100%; padding:12px; }
+}
+
 /* ============================================================
    03 — STORY (pinned horizontal track)
    ============================================================ */
@@ -264,6 +357,18 @@ body{
 .story__dots span{ width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,.2); transition:.3s; }
 .story__dots span.active{ background:var(--cyan); box-shadow:0 0 10px var(--cyan); width:20px; border-radius:4px; }
 
+/* Mobile: the horizontal pinned-scroll cinematic doesn't translate well to
+   touch scrolling, so panels stack vertically as normal sections instead. */
+@media (max-width:900px){
+  .scene--story{ height:auto; overflow:visible; padding:0; }
+  .story__track{ flex-direction:column; height:auto; width:100%; }
+  .story__panel{ width:100%; height:auto; min-height:auto; padding:12vh 7vw; }
+  .story__dots{ display:none; }
+}
+@media (max-width:600px){
+  .story__panel{ padding:9vh 6vw; }
+}
+
 /* price orbit */
 .price-orbit{ position:relative; width:420px; height:420px; margin-top:20px; }
 .price-orbit__center{
@@ -286,6 +391,10 @@ body{
 .price-orbit__store--best{ border-color:var(--cyan); box-shadow:0 0 26px rgba(76,224,255,.4); }
 .price-orbit__store--best b{ color:var(--cyan); }
 
+@media (max-width:600px){
+  .price-orbit{ transform:scale(.72); transform-origin:top center; margin-top:-30px; margin-bottom:-70px; }
+}
+
 /* review merge */
 .review-merge{ display:flex; align-items:center; gap:50px; margin-top:20px; }
 .review-merge__particles{ position:relative; width:180px; height:180px; }
@@ -301,6 +410,12 @@ body{
 .review-verdict__row b.pos{ color:#6bffb0; } .review-verdict__row b.neg{ color:#ff8b8b; }
 .review-verdict__score{ margin-top:14px; font-family:var(--mono); font-size:.85rem; color:var(--ink-dim); }
 .review-verdict__score span{ color:var(--cyan); font-size:1.1rem; }
+
+@media (max-width:600px){
+  .review-merge{ flex-direction:column; gap:24px; }
+  .review-merge__particles{ width:130px; height:130px; }
+  .review-verdict{ min-width:0; width:100%; padding:18px 20px; }
+}
 
 /* authenticity */
 .scan-box{ position:relative; margin-top:20px; width:260px; height:260px; border:1px solid var(--glass-brd); border-radius:20px; background:var(--glass); overflow:hidden; backdrop-filter:blur(10px); }
@@ -361,6 +476,11 @@ body{
 .scanner-features li{ font-family:var(--body); color:var(--ink-dim); font-size:1.02rem; display:flex; gap:14px; align-items:baseline; }
 .scanner-features li b{ font-family:var(--mono); color:var(--cyan); font-size:.85rem; }
 
+@media (max-width:760px){
+  .scanner-stage{ flex-direction:column; gap:40px; }
+  .scanner-phone{ width:190px; height:380px; }
+}
+
 /* ============================================================
    05 — ABOUT / TRUST PANELS
    ============================================================ */
@@ -386,6 +506,10 @@ body{
 .stat__label{ color:var(--ink-dim); font-size:.9rem; max-width:22ch; }
 .stat--solved .stat__label{ color:var(--ink); font-family:var(--display); font-size:1.3rem; }
 
+@media (max-width:600px){
+  .scene--stats{ flex-direction:column; align-items:flex-start; gap:32px; }
+}
+
 /* ============================================================
    07 — FINAL
    ============================================================ */
@@ -404,6 +528,11 @@ body{
 .cta-glow:hover{ transform:translateY(-3px) scale(1.03); box-shadow:0 0 70px rgba(157,107,255,.5); }
 .cta-glow--secondary{ background:transparent; border:1px solid rgba(255,255,255,.18); color:var(--ink); box-shadow:none; }
 .cta-glow--secondary:hover{ box-shadow:0 0 40px rgba(157,107,255,.25); }
+
+@media (max-width:480px){
+  .cta-glow{ width:100%; padding:16px 32px; }
+  .final__actions{ width:100%; flex-direction:column; }
+}
 
 .footer{
   position:relative; z-index:2; display:flex; justify-content:space-between;
