@@ -337,6 +337,8 @@ def build_trending_list(user=None):
 
     candidates = []
     candidates.extend(interests[:3])
+    interests = [t.strip() for t in re.split(r"[,;/]+", (user.interests or "")) if t.strip()]
+    candidates.extend(interests[:2])
     candidates.extend(categories[:2])
     candidates.extend(fallback)
 
@@ -1664,8 +1666,12 @@ Return ONLY JSON, no markdown fences:
         data = lens_generate_json(contents, system_instruction=build_system_prompt(),
                                      model=GROQ_VISION_MODEL, temperature=0.4)
         product_name = (data.get("product_name") or "").strip()
+        category = (data.get("category") or "").strip()
+        summary = (data.get("summary") or "").strip()
         if not product_name or product_name.lower() in {"unknown", "unclear", "not identified", "n/a", "none"}:
             return jsonify({"error": "Lens could not reliably identify a product in that image. Try a clearer photo or a barcode image."}), 400
+        if not category or not summary:
+            return jsonify({"error": "The scan was too uncertain. Try a clearer image, a barcode photo, or a different angle."}), 400
         data = enrich_single(data, "product_name")
         return jsonify(data)
     except Exception as exc:
