@@ -32,6 +32,7 @@
     <div class="rail__mark">
       <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="rail__logo">
       <span class="rail__word">BUYLENS</span>
+      <button class="rail__close" id="rail-close" aria-label="Close menu">✕</button>
     </div>
 
     <nav class="rail__nav" id="rail-nav">
@@ -41,6 +42,8 @@
       <button class="rail__item" data-view="assistant">
         <span class="rail__icon">✦</span><span class="rail__label">AI Assistant</span>
       </button>
+
+      <div class="rail__section-label">Shop</div>
       <button class="rail__item" data-view="search">
         <span class="rail__icon">◎</span><span class="rail__label">Search</span>
       </button>
@@ -50,6 +53,8 @@
       <button class="rail__item" data-view="compare">
         <span class="rail__icon">⇄</span><span class="rail__label">Compare</span>
       </button>
+
+      <div class="rail__section-label">Track</div>
       <button class="rail__item" data-view="wishlist">
         <span class="rail__icon">♡</span><span class="rail__label">Wishlist</span>
       </button>
@@ -62,6 +67,8 @@
       <button class="rail__item" data-view="saved">
         <span class="rail__icon">▤</span><span class="rail__label">Saved Products</span>
       </button>
+
+      <div class="rail__section-label">Insights</div>
       <button class="rail__item" data-view="recommend">
         <span class="rail__icon">◐</span><span class="rail__label">Recommendations</span>
       </button>
@@ -87,6 +94,9 @@
     </a>
   </aside>
 
+  <!-- backdrop behind the mobile drawer; tapping it closes the menu -->
+  <div class="rail-backdrop" id="rail-backdrop"></div>
+
   <!-- ============ MOBILE BOTTOM TAB BAR ============ -->
   <nav class="mobile-tabs" id="mobile-tabs" aria-label="Primary">
     <button class="mobile-tabs__item is-active" data-view="home">
@@ -101,8 +111,8 @@
     <button class="mobile-tabs__item" data-view="assistant">
       <span class="mobile-tabs__icon">✦</span><span class="mobile-tabs__label">Lens</span>
     </button>
-    <button class="mobile-tabs__item" data-view="profile">
-      <span class="mobile-tabs__icon">◉</span><span class="mobile-tabs__label">You</span>
+    <button class="mobile-tabs__item" id="mobile-menu-btn" aria-label="Open menu" aria-haspopup="true">
+      <span class="mobile-tabs__icon">☰</span><span class="mobile-tabs__label">Menu</span>
     </button>
   </nav>
 

@@ -352,19 +352,37 @@ def enrich_single(payload, name_field="product"):
 
 
 # --- Product image lookup ---------------------------------------------------
-# Two providers, tried in order:
+# Three providers, tried in order:
 #  1. Pexels — free stock-photo API (20,000 requests/month free, no card
-#     required, instant key). Better photo quality than Openverse and a much
-#     bigger index, but still stock-photography oriented — it won't have
-#     photos of an exact obscure SKU (e.g. "Acer Nitro 5 AN515-58"), just
-#     generic "laptop" / "gaming laptop" type shots. Get a free key at
-#     https://www.pexels.com/api/ and set PEXELS_API_KEY.
-#  2. Openverse — free, keyless, no setup, openly-licensed images only.
-#     Used automatically whenever Pexels isn't configured, or as a fallback
-#     if Pexels returns nothing.
+#     required, instant key). Better photo quality/index than the others,
+#     and its images are cleared for reuse — but it's stock-photography
+#     oriented, so it won't have photos of an exact obscure SKU (e.g. "Acer
+#     Nitro 5 AN515-58"), just generic "laptop" / "gaming laptop" shots. Get
+#     a free key at https://www.pexels.com/api/ and set PEXELS_API_KEY.
+#  2. DuckDuckGo image search (via the `ddgs` package) — NO API KEY, works
+#     out of the box. This scrapes the same image results a browser would
+#     get from duckduckgo.com, so it actually finds real photos of the
+#     specific product (product-page photos, retailer listings, etc.) far
+#     more often than a stock-photo API can. Be aware of what that costs:
+#       - It's unofficial. It can break if DuckDuckGo changes its frontend,
+#         and hitting it hard enough will get rate-limited — every failure
+#         is caught and just falls through to the next provider.
+#       - Unlike Pexels/Openverse, these results are NOT license-cleared.
+#         They're ordinary images from wherever they're hosted, same as if
+#         a person searched manually and right-clicked "copy image" — treat
+#         them as "here's what it looks like," not as pre-licensed assets.
+#         Provider is labeled accordingly so this is visible, not hidden.
+#  3. Openverse — free, keyless, openly-licensed images only. Last resort:
+#     used only if both of the above come back empty, so there's always
+#     *something* to show, and it's guaranteed license-safe.
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
 OPENVERSE_IMAGE_URL = "https://api.openverse.org/v1/images/"
+
+try:
+    from ddgs import DDGS
+except Exception:
+    DDGS = None
 
 # Angles we try to give the "view it from every side" feel. The first hit per
 # angle wins; angles that come back empty are simply omitted client-side.
@@ -421,6 +439,37 @@ def _pexels_image_search(query, count=2):
         return []
 
 
+def _duckduckgo_image_search(query, count=2):
+    """Keyless real-product image search via an unofficial DuckDuckGo scrape.
+    See the header comment above for the license-status caveat — every
+    result is tagged with a provider label that makes that visible in the UI
+    rather than implying these are cleared stock photos."""
+    if DDGS is None:
+        return []
+    try:
+        with DDGS() as ddgs:
+            results = ddgs.images(query, max_results=max(1, min(count, 10)), safesearch="moderate")
+        normalized = []
+        for r in results or []:
+            url = r.get("image") or r.get("thumbnail")
+            if not url:
+                continue
+            normalized.append({
+                "url": url,
+                "thumbnail": r.get("thumbnail") or url,
+                "title": r.get("title") or "",
+                "landing_url": r.get("url") or "",
+                "credit": r.get("source") or "",
+                "provider": "Web image — verify rights before reuse",
+            })
+        return normalized
+    except Exception as e:
+        # Rate-limited, blocked, or DuckDuckGo changed something on their
+        # end — expected occasionally for an unofficial scrape, not a bug.
+        app.logger.info("DuckDuckGo image search unavailable for %r: %s", query, e)
+        return []
+
+
 def _openverse_search(query, page_size=1):
     try:
         resp = requests.get(
@@ -450,9 +499,13 @@ def _openverse_search(query, page_size=1):
 
 
 def _search_images(query, count=2):
-    """Pexels first (if configured) for better photo quality/index size;
-    Openverse as the automatic, keyless fallback."""
+    """Pexels first (if configured, license-safe); then a keyless DuckDuckGo
+    scrape for real-product coverage (no license guarantee, labeled as such);
+    Openverse last as a keyless, always-safe fallback."""
     results = _pexels_image_search(query, count=count)
+    if results:
+        return results
+    results = _duckduckgo_image_search(query, count=count)
     if results:
         return results
     return _openverse_search(query, page_size=count)
@@ -1335,13 +1388,74 @@ def api_stats_category():
     return jsonify(stats.to_dict())
 
 
+# --- Real trending signal: Google Trends, no API key required ---------------
+# pytrends is an *unofficial* client that scrapes trends.google.com the same
+# way a browser would — there's no official free Trends API, so this is the
+# closest thing to "real" data without a paid key. Be aware of what that
+# actually costs you:
+#   - It's not sanctioned by Google and can break silently if they change
+#     their frontend; treat failures as expected, not exceptional.
+#   - Hitting it every 60 seconds per keyword WILL get the server's IP
+#     rate-limited or temporarily blocked. So we cache each keyword for
+#     TRENDS_CACHE_TTL and let the *minute-level rotation* (which keywords
+#     get shown, from which category) come from our own pool + the account's
+#     db-derived category weighting — only the score/direction per keyword
+#     is backed by a live Trends lookup, refreshed on a slower, safer cadence.
+#   - If pytrends isn't installed, or Google blocks/rate-limits us, or a
+#     term simply has no Trends data, we fall back to the deterministic
+#     simulated signal — and each item is tagged "live": true/false so the
+#     frontend (or you) can tell which is which rather than it being silently
+#     presented as real.
+try:
+    from pytrends.request import TrendReq
+    _pytrends_client = TrendReq(hl="en-US", tz=0)
+except Exception:
+    _pytrends_client = None
+
+TRENDS_CACHE_TTL = 20 * 60  # 20 minutes — see note above on why not every minute
+_trends_cache = {}
+
+
+def _fetch_google_trend(keyword):
+    """Return (direction, pct, is_live) for a keyword using real Google
+    Trends interest-over-time data, or (None, None, False) if unavailable."""
+    now = time.time()
+    cached = _trends_cache.get(keyword)
+    if cached and (now - cached["fetched_at"] < TRENDS_CACHE_TTL):
+        return cached["direction"], cached["pct"], True
+
+    if _pytrends_client is None:
+        return None, None, False
+
+    try:
+        _pytrends_client.build_payload([keyword], timeframe="now 7-d")
+        df = _pytrends_client.interest_over_time()
+        if df is None or df.empty or keyword not in df:
+            return None, None, False
+        series = df[keyword].astype(float)
+        if len(series) < 2:
+            return None, None, False
+        latest, prior = series.iloc[-1], series.iloc[-2]
+        base = prior if prior > 0 else 1.0
+        pct = round(abs(latest - prior) / base * 100, 1)
+        direction = "▲" if latest >= prior else "▼"
+        _trends_cache[keyword] = {"direction": direction, "pct": pct, "fetched_at": now}
+        return direction, pct, True
+    except Exception as e:
+        # Rate-limited, blocked, network hiccup, or a frontend change on
+        # Google's end — any of these are expected occasionally, not bugs.
+        app.logger.info("Google Trends lookup unavailable for %r: %s", keyword, e)
+        return None, None, False
+
+
 # --- "Trending Right Now" ----------------------------------------------------
-# A per-category pool of plausible trending items. This isn't pulled from a
-# live market feed (BuyLens has none), so it's clearly framed to the user as
-# a directional signal, not a live price feed. What IS real: which categories
-# get shown, and in what order, is driven by *this account's* own stats.categories
-# in the db (bumped every time they search/scan/save in that category) — so a
-# shopper who's mostly looked at phones sees phone-adjacent trends first.
+# A per-category pool of plausible trending items, used both as the candidate
+# list (which items even get shown) and as a fallback signal (%/direction)
+# for any item Google Trends doesn't return live data for. What's ALWAYS real:
+# which categories get shown, and in what order, is driven by *this account's*
+# own stats.categories in the db (bumped every time they search/scan/save in
+# that category) — so a shopper who's mostly looked at phones sees
+# phone-adjacent trends first.
 TRENDING_POOL = {
     "electronics":  ["iPhone 17 Pro", "Samsung Galaxy S25", "RTX 5080 laptops", "Noise-cancelling earbuds", "Foldable phones"],
     "phones":       ["iPhone 17 Pro", "Samsung Galaxy S25", "Google Pixel 10", "Foldable phones", "Budget 5G phones"],
@@ -1358,14 +1472,25 @@ TRENDING_POOL = {
 }
 
 
+
 def _trending_change_for(item, minute_seed):
-    """Deterministic (not random-each-refresh) +/- % so the same item shows
-    the same trend within a given minute, but the whole board can shift on
-    the next minute — a lightweight stand-in for a live feed refreshing."""
+    """Fallback deterministic (not random-each-refresh) +/- % so the same
+    item shows the same trend within a given minute even when Google Trends
+    has no data for it — a lightweight stand-in, clearly marked as such."""
     h = int(hashlib.sha256(f"{item}:{minute_seed}".encode()).hexdigest(), 16)
     pct = (h % 3400) / 100.0  # 0.00 – 33.99
     direction = "▲" if (h // 3400) % 5 != 0 else "▼"  # mostly up, sometimes down
     return direction, round(max(pct, 0.5), 1)
+
+
+def _trend_signal_for(item, minute_seed):
+    """Real Google Trends data if we can get it (cached ~20 min at a time),
+    otherwise the deterministic simulated fallback. Returns (direction, pct, is_live)."""
+    direction, pct, is_live = _fetch_google_trend(item)
+    if is_live:
+        return direction, pct, True
+    direction, pct = _trending_change_for(item, minute_seed)
+    return direction, pct, False
 
 
 @app.route("/api/trending")
@@ -1401,8 +1526,8 @@ def api_trending():
             if name in seen:
                 continue
             seen.add(name)
-            direction, pct = _trending_change_for(name, minute_seed)
-            items.append({"name": name, "direction": direction, "pct": pct, "category": cat})
+            direction, pct, is_live = _trend_signal_for(name, minute_seed)
+            items.append({"name": name, "direction": direction, "pct": pct, "category": cat, "live": is_live})
             break  # one per category per pass keeps the list varied
         if len(items) >= 4:
             break
@@ -1415,13 +1540,14 @@ def api_trending():
             if name in seen:
                 continue
             seen.add(name)
-            direction, pct = _trending_change_for(name, minute_seed)
-            items.append({"name": name, "direction": direction, "pct": pct, "category": "general"})
+            direction, pct, is_live = _trend_signal_for(name, minute_seed)
+            items.append({"name": name, "direction": direction, "pct": pct, "category": "general", "live": is_live})
 
     return jsonify({
         "items": items[:4],
         "personalized": bool(pool_order and pool_order[0] not in ("electronics", "general")),
         "refreshes_in_seconds": 60 - (int(time.time()) % 60),
+        "note": "pct/direction is real Google Trends data where available (see each item's 'live' flag), otherwise a clearly-marked simulated fallback.",
     })
 
 

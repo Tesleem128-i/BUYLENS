@@ -129,7 +129,10 @@
     list.classList.add("is-updating");
     list.innerHTML = items.map((it) => {
       const up = it.direction !== "▼";
-      return `<li><span>${escapeHtml(it.name)}</span><b class="${up ? "trend-up" : "trend-down"}">${it.direction} ${it.pct}%</b></li>`;
+      const liveTag = it.live
+        ? `<span class="trend-src trend-src--live" title="Backed by real Google Trends data">●</span>`
+        : `<span class="trend-src" title="Simulated signal — no live data available for this item right now">○</span>`;
+      return `<li><span>${liveTag}${escapeHtml(it.name)}</span><b class="${up ? "trend-up" : "trend-down"}">${it.direction} ${it.pct}%</b></li>`;
     }).join("");
     requestAnimationFrame(() => list.classList.remove("is-updating"));
     if (badge) badge.title = payload.personalized ? "Personalized to your activity" : "General trending";
@@ -225,12 +228,27 @@
   railItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   mobileTabItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
+  // stagger index for the drawer's opening animation (section labels count too)
+  $$(".rail__nav > *").forEach((el, i) => { el.style.setProperty("--ri", i); });
+
   const osRoot = document.querySelector(".os");
+  const railBackdrop = $("#rail-backdrop");
+
   function collapseRail(collapse) {
     osRoot.classList.toggle("is-rail-collapsed", collapse);
+    if (window.innerWidth <= 900) {
+      document.body.classList.toggle("rail-open", !collapse);
+      $("#mobile-menu-btn")?.classList.toggle("is-active", !collapse);
+    }
   }
-  $("#burger").addEventListener("click", () => {
-    osRoot.classList.toggle("is-rail-collapsed");
+  $("#burger").addEventListener("click", () => collapseRail(!osRoot.classList.contains("is-rail-collapsed")));
+  $("#rail-close")?.addEventListener("click", () => collapseRail(true));
+  $("#mobile-menu-btn")?.addEventListener("click", () => {
+    collapseRail(osRoot.classList.contains("is-rail-collapsed") ? false : true);
+  });
+  railBackdrop?.addEventListener("click", () => collapseRail(true));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !osRoot.classList.contains("is-rail-collapsed")) collapseRail(true);
   });
   if (window.innerWidth <= 900) collapseRail(true);
 

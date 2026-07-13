@@ -24,9 +24,15 @@
 .rail__mark{ display:flex; align-items:center; gap:10px; padding:0 10px 28px; }
 .rail__logo{ height:22px; width:auto; filter:drop-shadow(0 0 10px rgba(76,224,255,.45)); }
 .rail__word{ font-family:var(--mono); font-size:13px; letter-spacing:.14em; color:var(--ink); }
+.rail__close{ display:none; margin-left:auto; background:none; border:none; color:var(--ink-dim); font-size:16px; cursor:pointer; padding:6px 8px; border-radius:8px; }
+.rail__close:hover{ color:var(--ink); background:var(--glass); }
 
 .rail__nav{ display:flex; flex-direction:column; gap:4px; flex:1; overflow-y:auto; }
 .rail__divider{ height:1px; background:var(--glass-brd); margin:10px 6px; }
+.rail__section-label{
+  font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--ink-dim); opacity:.6; padding:16px 12px 6px;
+}
 
 .rail__item, .rail__exit{
   display:flex; align-items:center; gap:14px;
@@ -196,6 +202,8 @@
 }
 @keyframes livePulse{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.4; transform:scale(.7); } }
 .trend-note{ font-size:11px; color:var(--ink-dim); margin-top:10px; font-family:var(--mono); opacity:.7; }
+.trend-src{ display:inline-block; margin-right:7px; font-size:9px; color:var(--ink-dim); opacity:.5; }
+.trend-src--live{ color:#7CF7B0; opacity:1; text-shadow:0 0 6px #7CF7B0; }
 .pick__verify--low{ color:#FFB450; border-color:rgba(255,140,60,.35); background:rgba(255,140,60,.08); font-weight:600; }
 
 .recent-list{ display:flex; flex-direction:column; gap:8px; }
@@ -476,26 +484,56 @@
 /* ---------- responsive ---------- */
 @media (max-width:900px){
   .bar__burger{ display:flex; }
-  .rail{ position:fixed; z-index:70; top:0; left:0; box-shadow:0 0 60px rgba(0,0,0,.6); }
-  .os:not(.is-rail-collapsed) .rail{ width:248px; }
-  .os.is-rail-collapsed .rail{ width:0; padding:28px 0; }
+  .rail{
+    position:fixed; z-index:90; top:0; left:0; height:100dvh;
+    width:min(82vw, 300px); padding:24px 14px;
+    transform:translateX(-100%);
+    transition:transform .38s cubic-bezier(.16,1,.3,1);
+    box-shadow:0 0 60px rgba(0,0,0,.6);
+    border-radius:0 22px 22px 0;
+  }
+  .os:not(.is-rail-collapsed) .rail{ transform:translateX(0); }
+  .rail__close{ display:inline-flex; }
   .views{ padding:24px 18px 80px; }
   .bar{ padding:14px 16px; }
   .bar__search{ max-width:none; }
 }
 
+/* backdrop behind the drawer — fades/blurs in only while the drawer is open */
+.rail-backdrop{
+  display:none; position:fixed; inset:0; z-index:85;
+  background:rgba(5,7,12,.55); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  opacity:0; transition:opacity .3s ease; pointer-events:none;
+}
+@media (max-width:900px){
+  .rail-backdrop{ display:block; }
+  .os:not(.is-rail-collapsed) .rail-backdrop{ opacity:1; pointer-events:auto; }
+  body.rail-open{ overflow:hidden; }
+}
+
+/* a little stagger so the drawer's items feel alive as it opens, not just a static panel */
+@media (max-width:900px){
+  .rail__item, .rail__section-label{ opacity:0; transform:translateX(-8px); }
+  .os:not(.is-rail-collapsed) .rail__item,
+  .os:not(.is-rail-collapsed) .rail__section-label{
+    opacity:1; transform:translateX(0);
+    transition:opacity .32s ease, transform .32s ease;
+  }
+  .os:not(.is-rail-collapsed) .rail__nav > *{ transition-delay:calc(var(--ri, 0) * 28ms); }
+}
+
 /* ============================================================
    MOBILE BOTTOM TAB BAR — a proper native-app-style nav for phones.
-   Hidden entirely on desktop; on mobile it replaces reliance on the
-   burger menu for the 5 most common destinations, with a floating
-   center "scan" action since that's BuyLens's signature feature.
+   Covers the 4 most common actions plus a "Menu" tab that opens the
+   full drawer above, so every feature in the sidebar stays reachable —
+   nothing is ever hidden behind a control the user can't find.
    ============================================================ */
 .mobile-tabs{ display:none; }
 
 @media (max-width:720px){
   .mobile-tabs{
     display:flex; align-items:center; justify-content:space-around;
-    position:fixed; left:10px; right:10px; bottom:12px; z-index:80;
+    position:fixed; left:10px; right:10px; bottom:calc(12px + env(safe-area-inset-bottom)); z-index:80;
     padding:8px 6px; border-radius:22px;
     background:rgba(10,14,24,.72); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
     border:1px solid var(--glass-brd);
@@ -527,7 +565,7 @@
 
   /* clear space above the tab bar so content never hides behind it */
   .views{ padding-bottom:112px; }
-  .bar__burger{ display:none; } /* bottom tabs replace the burger's job on very small screens */
+  .bar__burger{ display:none; } /* the Menu tab below covers this job on very small screens */
 
   /* denser, thumb-friendly cards */
   .grid--insights{ grid-template-columns:1fr 1fr; gap:10px; }
