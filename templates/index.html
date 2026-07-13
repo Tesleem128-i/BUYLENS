@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BuyLens — Never Regret a Purchase</title>
-<meta name="description" content="BuyLens is the AI buying intelligence platform. Scan it. Know it. Never regret it.">
+<title>Prism — Never Regret a Purchase</title>
+<meta name="description" content="Prism is the AI buying intelligence platform. Scan it. Know it. Never regret it.">
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -30,8 +30,19 @@
   <div class="intro__blade" style="--i:6"></div>
   <div class="intro__blade" style="--i:7"></div>
   <div class="intro__hud">
-    <div class="intro__scramble" id="intro-scramble">BUYLENS</div>
-    <div class="intro__status" id="intro-status">CALIBRATING LENS</div>
+    <svg class="intro__prism" viewBox="0 0 72 64" aria-hidden="true">
+      <path class="intro__prism-beam" d="M2 20 L30 40"></path>
+      <polygon class="intro__prism-tri" points="30,14 50,40 10,40"></polygon>
+      <g class="intro__prism-fan">
+        <path d="M36 40 L70 20" stroke="#ff4d6d" stroke-width="2"></path>
+        <path d="M36 40 L70 30" stroke="#ffd24d" stroke-width="2"></path>
+        <path d="M36 40 L70 40" stroke="#8CFF8C" stroke-width="2"></path>
+        <path d="M36 40 L70 50" stroke="#4CE0FF" stroke-width="2"></path>
+        <path d="M36 40 L70 60" stroke="#9D6BFF" stroke-width="2"></path>
+      </g>
+    </svg>
+    <div class="intro__scramble" id="intro-scramble">PRISM</div>
+    <div class="intro__status" id="intro-status">ALIGNING PRISM</div>
     <div class="intro__bar"><div class="intro__bar-fill" id="intro-bar"></div></div>
   </div>
   <div class="intro__flash"></div>
@@ -47,7 +58,7 @@
 
 <nav class="nav">
   <div class="nav__mark">
-    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="nav__logo-img">BUYLENS
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism" class="nav__logo-img">PRISM
   </div>
   <div class="nav__links">
     <a href="#scanner">Scanner</a>
@@ -66,8 +77,8 @@
     <div class="void__ring void__ring--2"></div>
   </div>
   <div class="void__reveal">
-    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="logo-img logo-img--void">
-    <h1 class="logo-reveal">BUY<span>LENS</span></h1>
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism" class="logo-img logo-img--void">
+    <h1 class="logo-reveal">PR<span>ISM</span></h1>
     <p class="tagline-reveal">Never Regret a Purchase.</p>
   </div>
   <div class="scroll-cue">
@@ -80,7 +91,7 @@
 <section class="scene scene--city" id="city">
   <div class="city__label eyebrow">The Buying Universe</div>
   <h2 class="scene-title">One lens.<br>Every category.</h2>
-  <p class="scene-sub">BuyLens isn't a shopping app. It's the operating system for buying anything — phones, cars, homes, flights, insurance, and everything between.</p>
+  <p class="scene-sub">Prism isn't a shopping app. It's the operating system for buying anything — phones, cars, homes, flights, insurance, and everything between.</p>
 
   <div class="city-grid" id="city-grid">
     <div class="city-block" data-cat="Electronics"><span class="city-block__icon">◈</span><span>Electronics</span></div>
@@ -134,12 +145,12 @@
 
     <div class="story__panel has-image" data-panel="solution">
       <div class="panel-copy">
-        <div class="eyebrow">BuyLens Arrives</div>
+        <div class="eyebrow">Prism Arrives</div>
         <h3>One AI.<br>Every answer.</h3>
         <p>The chaos collapses into a single lens. One search reaches every store, every review, every signal — and hands you a verdict.</p>
       </div>
       <div class="panel-visual">
-        <img src="{{ url_for('static', filename='img/solution.png') }}" alt="BuyLens resolves the chaos" class="panel-image">
+        <img src="{{ url_for('static', filename='img/solution.png') }}" alt="Prism resolves the chaos" class="panel-image">
       </div>
     </div>
 
@@ -251,7 +262,7 @@
 
 <!-- ============ 05 : ABOUT / TRUST PANELS ============ -->
 <section class="scene scene--about" id="trust">
-  <div class="eyebrow">Why Trust BuyLens</div>
+  <div class="eyebrow">Why Trust Prism</div>
   <h2 class="scene-title">Built to be<br>believed.</h2>
   <div class="panel-grid">
     <div class="glass-panel"><h4>Mission</h4><p>Help people make smarter buying decisions before spending money.</p></div>
@@ -263,7 +274,7 @@
   </div>
 </section>
 
-<!-- ============ 06 : WHY BUYLENS STATS ============ -->
+<!-- ============ 06 : WHY PRISM STATS ============ -->
 <section class="scene scene--stats" id="stats">
   <div class="stat"><span class="stat__num" data-count="4.9">0</span><span class="stat__label">Trillion $ spent online yearly</span></div>
   <div class="stat"><span class="stat__num" data-count="22">0</span><span class="stat__label">% of listings flagged as counterfeit-risk</span></div>
@@ -275,8 +286,8 @@
 <section class="scene scene--final" id="begin">
   <canvas id="final-canvas"></canvas>
   <div class="final__content">
-    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="logo-img logo-img--final">
-    <h2 class="logo-reveal logo-reveal--final">BUY<span>LENS</span></h2>
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism" class="logo-img logo-img--final">
+    <h2 class="logo-reveal logo-reveal--final">PR<span>ISM</span></h2>
     <p class="tagline-reveal">Never Regret a Purchase.</p>
     <div class="final__actions">
       <a class="cta-glow" href="{{ url_for('login') }}">Login</a>
@@ -286,7 +297,7 @@
 </section>
 
 <footer class="footer">
-  <span>© 2026 BuyLens. AI Buying Intelligence.</span>
+  <span>© 2026 Prism. AI Buying Intelligence.</span>
   <span>Lagos · Remote-first</span>
 </footer>
 

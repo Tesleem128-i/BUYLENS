@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BuyLens — Dashboard</title>
+<title>Prism — Dashboard</title>
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 </head>
 <body class="os-body" data-lens="{{ 'on' if lens_configured else 'off' }}" data-user="{{ first_name }}">
 
-<script type="application/json" id="buylens-user-data">
+<script type="application/json" id="prism-user-data">
 {
   "fullName": {{ (user.full_name or "")|tojson }},
   "firstName": {{ first_name|tojson }},
@@ -30,8 +30,8 @@
   <!-- ============ SIDEBAR ============ -->
   <aside class="rail" id="rail">
     <div class="rail__mark">
-      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens" class="rail__logo">
-      <span class="rail__word">BUYLENS</span>
+      <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism" class="rail__logo">
+      <span class="rail__word">PRISM</span>
       <button class="rail__close" id="rail-close" aria-label="Close menu">✕</button>
     </div>
 
@@ -109,7 +109,7 @@
       <span class="mobile-tabs__fab">▣</span>
     </button>
     <button class="mobile-tabs__item" data-view="assistant">
-      <span class="mobile-tabs__icon">✦</span><span class="mobile-tabs__label">Lens</span>
+      <span class="mobile-tabs__icon">✦</span><span class="mobile-tabs__label">Prism</span>
     </button>
     <button class="mobile-tabs__item" id="mobile-menu-btn" aria-label="Open menu" aria-haspopup="true">
       <span class="mobile-tabs__icon">☰</span><span class="mobile-tabs__label">Menu</span>
@@ -123,12 +123,7 @@
     <header class="bar">
       <button class="bar__burger" id="burger" aria-label="Toggle menu"><span></span><span></span><span></span></button>
 
-      <form class="bar__search" id="bar-search-form">
-        <span class="bar__search-icon">◎</span>
-        <input type="text" id="bar-search-input" placeholder="Ask Lens anything — gaming laptop under $1000, RTX 5090, apartment in Lagos…" autocomplete="off">
-        <button type="button" class="bar__icon-btn" id="bar-voice-btn" title="Voice search">◐</button>
-        <button type="button" class="bar__icon-btn" id="bar-cam-btn" title="Camera scan">▣</button>
-      </form>
+      <div class="bar__spacer"></div>
 
       <div class="bar__actions">
         <button class="bar__bell" id="bell-btn" title="Notifications">
@@ -168,7 +163,7 @@
           <div class="glass card card--stat">
             <span class="card__label">Money Saved</span>
             <span class="card__num" id="stat-saved">₦0</span>
-            <span class="card__sub">via BuyLens price intelligence</span>
+            <span class="card__sub">via Prism price intelligence</span>
           </div>
           <div class="glass card card--stat">
             <span class="card__label">Searches Run</span>
@@ -191,9 +186,9 @@
           <div class="glass panel">
             <div class="panel__head">
               <h3>Today's Insight</h3>
-              <span class="eyebrow-mini">Lens</span>
+              <span class="eyebrow-mini">Prism</span>
             </div>
-            <p class="panel__body" id="insight-text">Ask Lens something in the assistant, or run a search — insights will appear here as you shop.</p>
+            <p class="panel__body" id="insight-text">Ask Prism something in the assistant, or run a search — insights will appear here as you shop.</p>
           </div>
           <div class="glass panel">
             <div class="panel__head">
@@ -226,7 +221,7 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">AI Shopping Assistant</div>
-            <h2>Talk to Lens.</h2>
+            <h2>Talk to Prism.</h2>
           </div>
           <button class="ghost-btn" id="chat-clear-btn">New chat</button>
         </div>
@@ -236,7 +231,7 @@
             <div class="chat__msg chat__msg--model">
               <div class="chat__avatar chat__avatar--model">L</div>
               <div class="chat__bubble">
-                Hi, I'm <b>Lens</b>. Tell me what you're buying, your budget, or paste a product to compare — I'll reason through it like a very well-informed friend who's obsessed with specs and pricing.
+                Hi, I'm <b>Prism</b>. Tell me what you're buying, your budget, or paste a product to compare — I'll reason through it like a very well-informed friend who's obsessed with specs and pricing.
               </div>
             </div>
           </div>
@@ -307,8 +302,8 @@
           </div>
 
           <div class="glass panel scan-result" id="scan-result">
-            <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Lens Vision</span></div>
-            <p class="empty-note">Upload a product photo or a barcode image — Lens will identify it, estimate pricing, and suggest alternatives.</p>
+            <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Prism Vision</span></div>
+            <p class="empty-note">Upload a product photo or a barcode image — Prism will identify it, estimate pricing, and suggest alternatives.</p>
           </div>
         </div>
 
@@ -361,7 +356,7 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">Price Alerts</div>
-            <h2>Tell Lens what price to watch for.</h2>
+            <h2>Tell Prism what price to watch for.</h2>
           </div>
         </div>
         <form class="alert-form glass" id="alert-form">
@@ -377,7 +372,7 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">Activity</div>
-            <h2>Everything you've asked Lens.</h2>
+            <h2>Everything you've asked Prism.</h2>
           </div>
           <button class="ghost-btn" id="history-clear-btn">Clear history</button>
         </div>
@@ -400,7 +395,7 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">AI Recommendations</div>
-            <h2>Tell Lens the need and the budget.</h2>
+            <h2>Tell Prism the need and the budget.</h2>
           </div>
         </div>
         <form class="recommend-form glass" id="recommend-form">
@@ -425,13 +420,13 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">Your Buying Analytics</div>
-            <h2>How you shop with BuyLens.</h2>
+            <h2>How you shop with Prism.</h2>
           </div>
         </div>
         <div class="grid grid--insights">
           <div class="glass card card--stat"><span class="card__label">Saved</span><span class="card__num" id="an-saved">₦0</span><span class="card__sub">total across all purchases</span></div>
           <div class="glass card card--stat"><span class="card__label">Searches</span><span class="card__num" id="an-searches">0</span><span class="card__sub">this month</span></div>
-          <div class="glass card card--stat"><span class="card__label">Recs Accepted</span><span class="card__num" id="an-accepted">0</span><span class="card__sub">out of Lens's picks</span></div>
+          <div class="glass card card--stat"><span class="card__label">Recs Accepted</span><span class="card__num" id="an-accepted">0</span><span class="card__sub">out of Prism's picks</span></div>
           <div class="glass card card--stat"><span class="card__label">Top Category</span><span class="card__num card__num--text" id="an-category">—</span><span class="card__sub">most searched</span></div>
         </div>
         <div class="grid grid--split">
@@ -445,13 +440,13 @@
         <div class="view-head">
           <div>
             <div class="eyebrow-mini">AI Copilot Tools</div>
-            <h2>Fifteen ways Lens goes beyond search.</h2>
+            <h2>Fifteen ways Prism goes beyond search.</h2>
           </div>
         </div>
 
         <div class="glass panel copilot-memory">
           <div class="panel__head"><h3>🧠 AI Shopping Memory</h3></div>
-          <p class="copilot-memory__sub">What Lens has picked up about how you shop, from your searches and wishlist.</p>
+          <p class="copilot-memory__sub">What Prism has picked up about how you shop, from your searches and wishlist.</p>
           <div id="copilot-memory-notes" class="memory-notes"><p class="empty-note">Loading…</p></div>
         </div>
 
@@ -493,7 +488,7 @@
 
         <div class="glass panel settings-panel">
           <div class="settings-row">
-            <div><b>Theme</b><span>Choose how BuyLens looks.</span></div>
+            <div><b>Theme</b><span>Choose how Prism looks.</span></div>
             <div class="seg" id="theme-seg">
               <button class="seg__opt is-active" data-theme="void">Void</button>
               <button class="seg__opt" data-theme="aurora">Aurora</button>
@@ -522,7 +517,7 @@
             <label class="toggle"><input type="checkbox" id="toggle-2fa"><span></span></label>
           </div>
           <div class="settings-row settings-row--danger">
-            <div><b>Delete account</b><span>Permanently remove your BuyLens account and data.</span></div>
+            <div><b>Delete account</b><span>Permanently remove your Prism account and data.</span></div>
             <button class="danger-btn" id="delete-account-btn">Delete</button>
           </div>
         </div>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Log in — BuyLens</title>
+<title>Log in — Prism</title>
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,12 +13,12 @@
 <body class="auth-body">
 
 <div class="auth-glow"></div>
-<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to Prism</a>
 
 <div class="auth-card">
   <div class="auth-card__mark">
-    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="BuyLens">
-    <span>BUY<b>LENS</b></span>
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism">
+    <span>PR<b>ISM</b></span>
   </div>
 
   <div class="auth-eyebrow">Welcome Back</div>
@@ -49,7 +49,7 @@
     <button type="submit" class="auth-submit">Log in</button>
   </form>
 
-  <p class="auth-switch">New to BuyLens? <a href="{{ url_for('signup') }}">Create an account</a></p>
+  <p class="auth-switch">New to Prism? <a href="{{ url_for('signup') }}">Create an account</a></p>
 </div>
 
 </body>

@@ -1,5 +1,5 @@
 /* ============================================================
-   BUYLENS — design tokens
+   PRISM — design tokens
    bg-void      #05070C
    bg-navy      #0A1024
    glass        rgba(255,255,255,0.04)
@@ -42,18 +42,19 @@ body{
 ::selection{ background:var(--violet); color:var(--void); }
 
 /* ============================================================
-   INTRO — LENS CALIBRATION BOOT SEQUENCE
-   A camera-aperture wipe: 8 shutter blades retract from center,
-   revealing the void scene beneath, while a scramble-text HUD
-   "calibrates" the lens. Plays once per page load.
+   INTRO — PRISM LIGHT-SPLIT BOOT SEQUENCE
+   A single white beam strikes a prism and fans out into 8 wedges
+   of spectrum color, which then fly outward and fade — revealing
+   the void scene beneath — while a scramble-text HUD "aligns" the
+   prism. Plays once per page load.
    ============================================================ */
 .intro{
   position:fixed; inset:0; z-index:200;
   display:flex; align-items:center; justify-content:center;
+  background:var(--void);
 }
 .intro__blade{
   position:fixed; inset:-25%;
-  background:var(--void);
   clip-path:polygon(50% 50%, 100% 0%, 100% 100%);
   transform:rotate(calc(var(--i) * 45deg));
   transform-origin:50% 50%;
@@ -62,7 +63,20 @@ body{
     opacity .7s ease calc(.35s + var(--i) * .045s);
   z-index:101;
   will-change:transform, opacity;
+  opacity:.9;
+  mix-blend-mode:screen;
 }
+/* each wedge carries its own slice of the visible spectrum, so the
+   burst reads as light splitting through a prism rather than a
+   camera-shutter wipe */
+.intro__blade:nth-child(1){ background:linear-gradient(90deg,#ff4d6d,#ff8a4d); }
+.intro__blade:nth-child(2){ background:linear-gradient(90deg,#ff8a4d,#ffd24d); }
+.intro__blade:nth-child(3){ background:linear-gradient(90deg,#ffd24d,#8CFF8C); }
+.intro__blade:nth-child(4){ background:linear-gradient(90deg,#8CFF8C,#4CE0FF); }
+.intro__blade:nth-child(5){ background:linear-gradient(90deg,#4CE0FF,#5B8CFF); }
+.intro__blade:nth-child(6){ background:linear-gradient(90deg,#5B8CFF,#9D6BFF); }
+.intro__blade:nth-child(7){ background:linear-gradient(90deg,#9D6BFF,#ff6bd6); }
+.intro__blade:nth-child(8){ background:linear-gradient(90deg,#ff6bd6,#ff4d6d); }
 .intro.is-opening .intro__blade{
   transform:rotate(calc(var(--i) * 45deg + 70deg)) scale(2.8);
   opacity:0;
@@ -74,28 +88,49 @@ body{
   padding:0 6vw; text-align:center;
 }
 .intro.is-opening .intro__hud{ opacity:0; }
+/* small triangular prism glyph with a beam splitting into a rainbow
+   fan — sits above the wordmark as the literal "logo" of the sequence */
+.intro__prism{ position:relative; z-index:102; width:72px; height:64px; overflow:visible; }
+.intro__prism-beam{
+  stroke:rgba(255,255,255,.85); stroke-width:2; fill:none;
+  stroke-dasharray:60; stroke-dashoffset:60;
+  animation:prismBeamIn .5s ease forwards .15s;
+}
+.intro__prism-fan path{
+  opacity:0; transform-origin:36px 40px;
+  animation:prismFanOut .6s cubic-bezier(.2,.8,.2,1) forwards;
+}
+.intro__prism-fan path:nth-child(1){ animation-delay:.55s; }
+.intro__prism-fan path:nth-child(2){ animation-delay:.6s; }
+.intro__prism-fan path:nth-child(3){ animation-delay:.65s; }
+.intro__prism-fan path:nth-child(4){ animation-delay:.7s; }
+.intro__prism-fan path:nth-child(5){ animation-delay:.75s; }
+.intro__prism-tri{ fill:rgba(255,255,255,.06); stroke:var(--cyan); stroke-width:1.4; filter:drop-shadow(0 0 10px rgba(76,224,255,.5)); }
+@keyframes prismBeamIn{ to{ stroke-dashoffset:0; } }
+@keyframes prismFanOut{ from{ opacity:0; transform:scaleX(.2); } to{ opacity:1; transform:scaleX(1); } }
+.intro.is-opening .intro__prism{ opacity:0; transition:opacity .4s ease; }
 .intro__scramble{
   font-family:var(--display); font-weight:700;
   font-size:clamp(1.9rem, 7vw, 3.6rem);
   letter-spacing:.08em; color:var(--ink);
-  text-shadow:0 0 26px rgba(76,224,255,.55), 2px 0 rgba(255,70,120,.45), -2px 0 rgba(76,224,255,.45);
+  text-shadow:0 0 26px rgba(76,224,255,.55), 2px 0 rgba(255,70,120,.45), -2px 0 rgba(157,107,255,.45);
 }
 .intro__status{
   font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase;
   color:var(--cyan); min-height:1.4em;
 }
 .intro__bar{ width:220px; max-width:56vw; height:2px; background:rgba(255,255,255,.08); border-radius:2px; overflow:hidden; }
-.intro__bar-fill{ display:block; height:100%; width:0%; background:linear-gradient(90deg,var(--cyan),var(--violet)); box-shadow:0 0 12px var(--cyan); }
+.intro__bar-fill{ display:block; height:100%; width:0%; background:linear-gradient(90deg,#ff4d6d,#ffd24d,#4CE0FF,#9D6BFF); box-shadow:0 0 12px var(--cyan); }
 .intro__brackets{ position:fixed; inset:0; z-index:102; pointer-events:none; transition:opacity .5s ease; }
 .intro.is-opening .intro__brackets{ opacity:0; }
 .intro__bracket{
   position:absolute; width:34px; height:34px; border:2px solid var(--cyan);
   opacity:0; animation:bracketIn .8s cubic-bezier(.2,.8,.2,1) forwards;
 }
-.intro__bracket--tl{ top:8vh; left:6vw; border-right:none; border-bottom:none; animation-delay:.05s; }
-.intro__bracket--tr{ top:8vh; right:6vw; border-left:none; border-bottom:none; animation-delay:.12s; }
-.intro__bracket--bl{ bottom:8vh; left:6vw; border-right:none; border-top:none; animation-delay:.12s; }
-.intro__bracket--br{ bottom:8vh; right:6vw; border-left:none; border-top:none; animation-delay:.05s; }
+.intro__bracket--tl{ top:8vh; left:6vw; border-right:none; border-bottom:none; animation-delay:.05s; border-color:#ff8a4d; }
+.intro__bracket--tr{ top:8vh; right:6vw; border-left:none; border-bottom:none; animation-delay:.12s; border-color:#4CE0FF; }
+.intro__bracket--bl{ bottom:8vh; left:6vw; border-right:none; border-top:none; animation-delay:.12s; border-color:#9D6BFF; }
+.intro__bracket--br{ bottom:8vh; right:6vw; border-left:none; border-top:none; animation-delay:.05s; border-color:#ffd24d; }
 @keyframes bracketIn{ from{ opacity:0; transform:scale(1.7); } to{ opacity:.7; transform:scale(1); } }
 .intro__flash{ position:fixed; inset:0; z-index:103; background:#fff; opacity:0; pointer-events:none; }
 .intro.is-opening .intro__flash{ animation:flashPop .6s ease-out .9s forwards; }
@@ -107,9 +142,10 @@ body{
   .intro__bracket--bl, .intro__bracket--br{ bottom:5vh; }
   .intro__bracket--tl, .intro__bracket--bl{ left:5vw; }
   .intro__bracket--tr, .intro__bracket--br{ right:5vw; }
+  .intro__prism{ width:56px; height:50px; }
 }
 @media (prefers-reduced-motion: reduce){
-  .intro__blade, .intro__hud, .intro__brackets, .intro__flash{ transition:none !important; animation:none !important; }
+  .intro__blade, .intro__hud, .intro__brackets, .intro__flash, .intro__prism-beam, .intro__prism-fan path{ transition:none !important; animation:none !important; opacity:1; stroke-dashoffset:0; }
 }
 
 /* ---------- background canvas ---------- */

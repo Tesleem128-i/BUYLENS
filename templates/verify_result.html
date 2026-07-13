@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{ 'Email verified' if status == 'success' else 'Verification code' }} — BuyLens</title>
+<title>{{ 'Email verified' if status == 'success' else 'Verification code' }} — Prism</title>
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,7 +13,7 @@
 <body class="auth-body">
 
 <div class="auth-glow"></div>
-<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to BuyLens</a>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to Prism</a>
 
 <div class="auth-card">
   {% if status == 'pending' %}

@@ -1,4 +1,4 @@
-/* ===================== BUYLENS — interaction layer ===================== */
+/* ===================== PRISM — interaction layer ===================== */
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -26,8 +26,8 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
   const scrambleEl = document.getElementById('intro-scramble');
   const statusEl = document.getElementById('intro-status');
   const barEl = document.getElementById('intro-bar');
-  const finalText = 'BUYLENS';
-  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%◆◈◇▲◎◉0123456789';
+  const finalText = 'PRISM';
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#$%◆✦❖▲◇✧0123456789';
   const totalFrames = 22;
   let frame = 0;
 
@@ -43,7 +43,7 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
   }
   scrambleTick();
 
-  const statuses = ['CALIBRATING LENS', 'SCANNING MARKET SIGNAL', 'CROSS-REFERENCING REVIEWS', 'LOCKED'];
+  const statuses = ['ALIGNING PRISM', 'REFRACTING MARKET SIGNAL', 'SPLITTING PRICE SPECTRUM', 'FOCUSED'];
   let statusIdx = 0;
   const statusInterval = setInterval(() => {
     statusIdx++;

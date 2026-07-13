@@ -1,5 +1,5 @@
 /* ============================================================
-   BUYLENS — Dashboard logic
+   PRISM — Dashboard logic
    ============================================================ */
 (() => {
   "use strict";
@@ -8,12 +8,12 @@
   const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
   const body = document.body;
-  const LENS_ON = body.dataset.lens === "on";
+  const PRISM_ON = body.dataset.lens === "on";
 
   /* ---------------- user profile data (injected by Flask) ---------------- */
   function readUserData() {
     try {
-      const raw = $("#buylens-user-data")?.textContent;
+      const raw = $("#prism-user-data")?.textContent;
       return raw ? JSON.parse(raw) : {};
     } catch { return {}; }
   }
@@ -46,12 +46,12 @@
   const Store = {
     get(key, fallback) {
       try {
-        const raw = localStorage.getItem("buylens:" + key);
+        const raw = localStorage.getItem("prism:" + key);
         return raw ? JSON.parse(raw) : fallback;
       } catch { return fallback; }
     },
     set(key, val) {
-      try { localStorage.setItem("buylens:" + key, JSON.stringify(val)); } catch {}
+      try { localStorage.setItem("prism:" + key, JSON.stringify(val)); } catch {}
     },
   };
 
@@ -267,7 +267,7 @@
     const items = [
       ...state.alerts.slice(0, 3).map((a) => `<div class="notif-item">Watching <b>${escapeHtml(a.product)}</b> for ${escapeHtml(a.price)}</div>`),
       `<div class="notif-item"><b>iPhone 17 Pro</b> demand is up 12% this week.</div>`,
-      `<div class="notif-item">Lens found a possible price drop pattern on <b>noise-cancelling earbuds</b>.</div>`,
+      `<div class="notif-item">Prism found a possible price drop pattern on <b>noise-cancelling earbuds</b>.</div>`,
     ];
     list.innerHTML = items.join("") || `<div class="notif-item">You're all caught up.</div>`;
   }
@@ -292,7 +292,7 @@
 
   /* ================================================================
      PRODUCT VISUALS — multi-angle gallery ("spin" viewer) + marketplace bar
-     Whenever Lens is about to show a product, it also shows what it looks
+     Whenever Prism is about to show a product, it also shows what it looks
      like from a few angles, and where the shopper could go buy it.
      ================================================================ */
   let __galleryCounter = 0;
@@ -414,7 +414,7 @@
   }
 
   /* ================================================================
-     PACK CARDS — every Lens suggestion is wrapped in a sealed "pack"
+     PACK CARDS — every Prism suggestion is wrapped in a sealed "pack"
      that opens with a shake + spark-burst + reveal, like opening a
      card pack. Rarity is derived from the pick's own rank/tag, so the
      shine actually communicates something (this is the top pick vs.
@@ -428,7 +428,7 @@
     return "standard";
   }
   const RARITY_ICON = { iconic: "✦", gold: "◆", silver: "▲", standard: "●" };
-  const RARITY_LABEL = { iconic: "Iconic Pick", gold: "Gold Pick", silver: "Silver Pick", standard: "Lens Pick" };
+  const RARITY_LABEL = { iconic: "Iconic Pick", gold: "Gold Pick", silver: "Silver Pick", standard: "Prism Pick" };
 
   /** Wrap any pick's inner HTML in a sealed pack shell. Call this instead of
    *  returning raw pick markup, then call initPacks(root) after inserting. */
@@ -436,10 +436,10 @@
     const rarity = rarityForTag(tag);
     return `
       <div class="pack" data-rarity="${rarity}">
-        <button type="button" class="pack__seal" aria-label="Reveal ${escapeHtml(tag || "Lens pick")}">
+        <button type="button" class="pack__seal" aria-label="Reveal ${escapeHtml(tag || "Prism pick")}">
           <span class="pack__seal-icon">${RARITY_ICON[rarity]}</span>
           <span class="pack__seal-label">${escapeHtml(RARITY_LABEL[rarity])}</span>
-          <span class="pack__seal-tag">${escapeHtml(tag || "Lens Pick")}</span>
+          <span class="pack__seal-tag">${escapeHtml(tag || "Prism Pick")}</span>
           <span class="pack__seal-cta">Tap to reveal</span>
         </button>
         <div class="pack__content" aria-hidden="true">${innerHtml}</div>
@@ -553,7 +553,7 @@
         pack.classList.add("is-opening");
         const rarity = pack.dataset.rarity || "standard";
         const icon = seal.querySelector(".pack__seal-icon")?.textContent || "●";
-        const label = seal.querySelector(".pack__seal-label")?.textContent || "Lens Pick";
+        const label = seal.querySelector(".pack__seal-label")?.textContent || "Prism Pick";
         const tag = seal.querySelector(".pack__seal-tag")?.textContent || "";
         if (reduced) {
           finishInlineReveal(pack, content);
@@ -740,14 +740,14 @@
       : escapeHtml(message);
     addBubble("user", userBubbleHtml);
     state.chatHistory.push({ role: "user", text: message || "[Sent a photo]" });
-    logHistory("chat", message || "Sent a photo to Lens");
+    logHistory("chat", message || "Sent a photo to Prism");
     bumpStat("searches");
 
     const bubble = addBubble("model", '<span class="chat__cursor"></span>');
     chatSendBtn.disabled = true;
 
-    if (!LENS_ON) {
-      bubble.innerHTML = renderMarkdown("⚠️ **Lens is offline.** Add a `GROQ_API_KEY` to the server environment to activate live AI answers.");
+    if (!PRISM_ON) {
+      bubble.innerHTML = renderMarkdown("⚠️ **Prism is offline.** Add a `GROQ_API_KEY` to the server environment to activate live AI answers.");
       chatSendBtn.disabled = false;
       return;
     }
@@ -789,12 +789,12 @@
       }
       bubble.innerHTML = renderMarkdown(full || "I couldn't generate a response — try rephrasing.");
       state.chatHistory.push({ role: "model", text: full });
-      if (imageAttachment) maybeAward("First photo sent to Lens");
+      if (imageAttachment) maybeAward("First photo sent to Prism");
     } catch (err) {
-      bubble.innerHTML = renderMarkdown("⚠️ Something went wrong reaching Lens: " + err.message);
+      bubble.innerHTML = renderMarkdown("⚠️ Something went wrong reaching Prism: " + err.message);
     } finally {
       chatSendBtn.disabled = false;
-      maybeAward("First conversation with Lens");
+      maybeAward("First conversation with Prism");
     }
   }
 
@@ -827,9 +827,9 @@
     if (!query) return;
     logHistory("search", query);
     bumpStat("searches");
-    searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">Lens is analyzing "${escapeHtml(query)}"…</p></div>`;
-    if (!LENS_ON) {
-      searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">⚠️ Lens is offline — set GROQ_API_KEY on the server.</p></div>`;
+    searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">Prism is analyzing "${escapeHtml(query)}"…</p></div>`;
+    if (!PRISM_ON) {
+      searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY on the server.</p></div>`;
       return;
     }
     try {
@@ -843,9 +843,24 @@
   }
 
   function guessCategory(q) {
-    const words = ["laptop", "phone", "car", "apartment", "camera", "headphone", "gaming", "tv", "watch"];
-    const found = words.find((w) => q.toLowerCase().includes(w));
-    return found ? found[0].toUpperCase() + found.slice(1) : "General";
+    const text = (q || "").toLowerCase();
+    // Keys here must match TRENDING_POOL in app.py exactly — this is what
+    // actually drives "Trending Right Now" toward what a shopper searches.
+    const rules = [
+      { cat: "laptops", words: ["laptop", "notebook", "macbook", "ultrabook", "chromebook"] },
+      { cat: "phones", words: ["phone", "iphone", "samsung", "pixel", "smartphone", "android"] },
+      { cat: "vehicles", words: ["car", "vehicle", "suv", "ev", "sedan", "corolla", "truck"] },
+      { cat: "homes", words: ["apartment", "flat", "house", "home", "mortgage", "rent"] },
+      { cat: "travel", words: ["flight", "travel", "hotel", "luggage", "trip", "vacation"] },
+      { cat: "insurance", words: ["insurance", "cover", "hmo", "policy"] },
+      { cat: "gaming", words: ["game", "gaming", "console", "ps5", "xbox", "playstation"] },
+      { cat: "fashion", words: ["sneaker", "shoe", "jacket", "dress", "fashion", "denim", "watch"] },
+      { cat: "groceries", words: ["rice", "grocery", "groceries", "food", "pasta", "formula"] },
+      { cat: "audio", words: ["earbud", "headphone", "speaker", "airpods"] },
+      { cat: "electronics", words: ["camera", "tv", "gadget", "electronic", "gpu", "rtx", "monitor"] },
+    ];
+    const hit = rules.find((r) => r.words.some((w) => text.includes(w)));
+    return hit ? hit.cat : "general";
   }
 
   function pickCard(p, sourceLabel) {
@@ -863,7 +878,7 @@
           <div class="neg"><b>Cons</b><ul>${(p.cons || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
         </div>` : ""}
         ${marketBar(p.marketplace_links)}
-        <p class="pick__verify">⚠ Estimates from Lens — confirm live price &amp; stock on the marketplace before paying.</p>
+        <p class="pick__verify">⚠ Estimates from Prism — confirm live price &amp; stock on the marketplace before paying.</p>
         <div class="pick__actions">
           <button data-act="wishlist" data-name="${escapeHtml(p.name || "")}" data-price="${escapeHtml(p.price_estimate || p.price || "")}">+ Wishlist</button>
           <button data-act="reviews" data-name="${escapeHtml(p.name || "")}">Reviews</button>
@@ -892,17 +907,6 @@
 
   searchForm.addEventListener("submit", (e) => { e.preventDefault(); runSearch(searchInput.value.trim()); });
   $$(".chip", $("#view-search")).forEach((c) => c.addEventListener("click", () => { searchInput.value = c.dataset.val; runSearch(c.dataset.val); }));
-
-  /* bar search -> jump to search view */
-  $("#bar-search-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const q = $("#bar-search-input").value.trim();
-    if (!q) return;
-    showView("search");
-    searchInput.value = q;
-    runSearch(q);
-    $("#bar-search-input").value = "";
-  });
 
   /* ================================================================
      SCANNER (vision + barcode)
@@ -992,9 +996,9 @@
   $("#cam-shoot-btn").addEventListener("click", captureFromCamera);
 
   async function runVision(file) {
-    scanResultPanel.innerHTML = `<p class="empty-note">Lens is looking closely…</p>`;
-    if (!LENS_ON) {
-      scanResultPanel.innerHTML = `<p class="empty-note">⚠️ Lens is offline — set GROQ_API_KEY on the server.</p>`;
+    scanResultPanel.innerHTML = `<p class="empty-note">Prism is looking closely…</p>`;
+    if (!PRISM_ON) {
+      scanResultPanel.innerHTML = `<p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY on the server.</p>`;
       scannerLaser.classList.remove("is-active");
       return;
     }
@@ -1005,7 +1009,7 @@
     const timeout = setTimeout(() => controller.abort(), 25000); // never hang forever
     try {
       const res = await fetch("/api/ai/vision", { method: "POST", body: fd, signal: controller.signal });
-      const data = await res.json().catch(() => { throw new Error("Lens sent back something unreadable — try again."); });
+      const data = await res.json().catch(() => { throw new Error("Prism sent back something unreadable — try again."); });
       if (!res.ok) throw new Error(data.error || "Scan failed.");
       renderVisionResult(data);
       logHistory("scan", data.product_name || "Scanned product");
@@ -1025,7 +1029,7 @@
     const imageQuery = d.image_query || d.product_name || "";
     const confidence = (d.confidence || "").toLowerCase();
     const confidenceNote = confidence === "low"
-      ? `<p class="pick__verify pick__verify--low">⚠ Lens isn't confident about this one (low confidence) — the photo may be unclear. Treat this as a rough guess and verify carefully before buying.</p>`
+      ? `<p class="pick__verify pick__verify--low">⚠ Prism isn't confident about this one (low confidence) — the photo may be unclear. Treat this as a rough guess and verify carefully before buying.</p>`
       : "";
     const inner = `
       <div class="vision-card">
@@ -1039,11 +1043,11 @@
         <div class="vision-card__specs">${(d.specs || []).map((s) => `<span class="tag-pill">${escapeHtml(s)}</span>`).join("")}</div>
         ${marketBar(d.marketplace_links)}
         ${confidenceNote}
-        <p class="pick__verify">⚠ Lens identified this from the photo — confirm exact model, condition &amp; live price on the marketplace before buying.</p>
+        <p class="pick__verify">⚠ Prism identified this from the photo — confirm exact model, condition &amp; live price on the marketplace before buying.</p>
         <button class="ghost-btn" id="scan-to-wishlist" data-name="${escapeHtml(d.product_name || "")}" data-price="${escapeHtml(d.estimated_price || "")}">+ Add to wishlist</button>
       </div>`;
     scanResultPanel.innerHTML = `
-      <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Lens Vision</span></div>
+      <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Prism Vision</span></div>
       ${wrapPack(inner, "Vision Match")}`;
     hydrateGalleries(scanResultPanel);
     initPacks(scanResultPanel);
@@ -1057,9 +1061,9 @@
     e.preventDefault();
     const products = [$("#compare-a").value, $("#compare-b").value, $("#compare-c").value].map((v) => v.trim()).filter(Boolean);
     const out = $("#compare-results");
-    out.innerHTML = `<div class="glass panel"><p class="empty-note">Lens is weighing the tradeoffs…</p></div>`;
+    out.innerHTML = `<div class="glass panel"><p class="empty-note">Prism is weighing the tradeoffs…</p></div>`;
     logHistory("compare", products.join(" vs "));
-    if (!LENS_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Lens is offline — set GROQ_API_KEY.</p></div>`; return; }
+    if (!PRISM_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY.</p></div>`; return; }
     try {
       const data = await postJSON("/api/ai/compare", { products });
       const productLinks = data.product_links || {};
@@ -1077,7 +1081,7 @@
             ${galleryPlaceholder(name)}
             ${marketBar(productLinks[name])}
           </div>`, name)).join("")}</div>
-        <p class="pick__verify">⚠ Specs above are Lens's best estimate — confirm exact configuration and price on the marketplace links before buying.</p>`;
+        <p class="pick__verify">⚠ Specs above are Prism's best estimate — confirm exact configuration and price on the marketplace links before buying.</p>`;
       hydrateGalleries(out);
       initPacks(out);
       maybeAward("First comparison");
@@ -1091,7 +1095,7 @@
      ================================================================ */
   (async function loadFxHint() {
     const hint = $("#fx-hint");
-    if (!hint || !LENS_ON) return;
+    if (!hint || !PRISM_ON) return;
     try {
       const data = await (await fetch("/api/fx/usd-ngn")).json();
       if (data && data.rate) hint.textContent = `Live rate: $1 ≈ ₦${Number(data.rate).toLocaleString()}`;
@@ -1104,10 +1108,10 @@
     const budget = $("#rec-budget").value.trim();
     const currency = $("#rec-currency").value;
     const out = $("#recommend-results");
-    out.innerHTML = `<div class="glass panel"><p class="empty-note">Lens is ranking options…</p></div>`;
+    out.innerHTML = `<div class="glass panel"><p class="empty-note">Prism is ranking options…</p></div>`;
     logHistory("recommend", need);
     bumpCategory(guessCategory(need));
-    if (!LENS_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Lens is offline — set GROQ_API_KEY.</p></div>`; return; }
+    if (!PRISM_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY.</p></div>`; return; }
     try {
       const data = await postJSON("/api/ai/recommend", { need, budget, currency });
       out.innerHTML = `
@@ -1128,7 +1132,7 @@
                 <div><b>Long-term</b><p style="color:var(--ink-dim)">${escapeHtml(p.long_term || "")}</p></div>
               </div>
               ${marketBar(p.marketplace_links)}
-              <p class="pick__verify">⚠ Estimate from Lens — confirm live price &amp; stock before paying.</p>
+              <p class="pick__verify">⚠ Estimate from Prism — confirm live price &amp; stock before paying.</p>
               <div class="pick__actions">
                 <button data-act="accept" data-name="${escapeHtml(p.name || "")}" data-price="${escapeHtml(p.price || "")}">Accept pick</button>
               </div>
@@ -1326,7 +1330,7 @@
     $("#pf-achievements").textContent = state.achievements.length;
     $("#achv-row").innerHTML = state.achievements.length
       ? state.achievements.map((a) => `<div class="achv">🏆 <b>${escapeHtml(a)}</b></div>`).join("")
-      : `<p class="empty-note">Use Lens across the dashboard to unlock achievements.</p>`;
+      : `<p class="empty-note">Use Prism across the dashboard to unlock achievements.</p>`;
   }
 
   /* ================================================================
@@ -1373,7 +1377,7 @@
   /* ================================================================
      SCAM CHECK (surfaced inside AI Assistant flow via bar camera icon reused for URL paste)
      ================================================================ */
-  window.buylensScamCheck = async function (url) {
+  window.prismScamCheck = async function (url) {
     showView("assistant");
     addBubble("user", "Check this listing for scam risk: " + escapeHtml(url));
     const bubble = addBubble("model", '<span class="chat__cursor"></span>');
@@ -1410,10 +1414,6 @@
     });
   }
   attachVoice($("#chat-mic-btn"), (text) => { chatInput.value = text; chatForm.requestSubmit(); });
-  attachVoice($("#bar-voice-btn"), (text) => { showView("search"); searchInput.value = text; runSearch(text); });
-
-  /* ---------------- camera icon in top bar -> scanner view ---------------- */
-  $("#bar-cam-btn").addEventListener("click", () => { showView("scanner"); scanFile.click(); });
 
   /* ================================================================
      SETTINGS
@@ -1432,10 +1432,10 @@
   })();
 
   $("#delete-account-btn").addEventListener("click", async () => {
-    if (!confirm("This will permanently clear your saved BuyLens data (wishlist, history, alerts, achievements, stats). Continue?")) return;
+    if (!confirm("This will permanently clear your saved Prism data (wishlist, history, alerts, achievements, stats). Continue?")) return;
     try {
       await deleteJSON("/api/data/clear");
-      localStorage.removeItem("buylens:cache:snapshot");
+      localStorage.removeItem("prism:cache:snapshot");
       toast("Your saved data has been cleared.");
       setTimeout(() => location.reload(), 800);
     } catch (err) {
@@ -1604,10 +1604,10 @@
     },
     {
       id: "shopping-agent", icon: "🛰️", title: "AI Shopping Agent",
-      blurb: "Send Lens to check every marketplace and bring back the single best deal.",
+      blurb: "Send Prism to check every marketplace and bring back the single best deal.",
       endpoint: "/api/ai/shopping-agent",
       fields: [
-        { name: "need", label: "What should Lens go find?", type: "text", placeholder: "iPhone 16 Pro under ₦1.6M" },
+        { name: "need", label: "What should Prism go find?", type: "text", placeholder: "iPhone 16 Pro under ₦1.6M" },
         { type: "row", fields: [
           { name: "budget", label: "Budget (optional)", type: "text", placeholder: "1,600,000" },
           { name: "currency", label: "Currency", type: "select", options: ["NGN", "USD", "GBP", "EUR"] },
@@ -1627,7 +1627,7 @@
     },
     {
       id: "budget-planner", icon: "🧮", title: "AI Budget Planner",
-      blurb: "Hand Lens a lump budget and a goal — it splits it into a real shopping list.",
+      blurb: "Hand Prism a lump budget and a goal — it splits it into a real shopping list.",
       endpoint: "/api/ai/budget-planner",
       fields: [
         { name: "goal", label: "What are you budgeting for?", type: "text", placeholder: "Building a gaming PC setup" },
@@ -1848,11 +1848,11 @@
         const resultEl = $("#tool-result-" + toolId);
         const btn = form.querySelector("button[type='submit']");
         const payload = collectToolFields(tool.fields, form);
-        if (!LENS_ON) { resultEl.innerHTML = `<p class="empty-note">⚠️ Lens is offline — set GROQ_API_KEY on the server.</p>`; return; }
+        if (!PRISM_ON) { resultEl.innerHTML = `<p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY on the server.</p>`; return; }
         btn.disabled = true;
         const originalLabel = btn.textContent;
         btn.textContent = "Thinking…";
-        resultEl.innerHTML = tool.beforeRender ? tool.beforeRender() : `<p class="empty-note">Lens is working on it…</p>`;
+        resultEl.innerHTML = tool.beforeRender ? tool.beforeRender() : `<p class="empty-note">Prism is working on it…</p>`;
         try {
           const data = await postJSON(tool.endpoint, payload);
           resultEl.innerHTML = tool.render(data);

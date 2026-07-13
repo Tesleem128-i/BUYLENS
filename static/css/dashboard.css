@@ -1,5 +1,5 @@
 /* ============================================================
-   BUYLENS — Dashboard / AI Operating System
+   PRISM — Dashboard / AI Operating System
    Extends tokens defined in style.css
    ============================================================ */
 
@@ -67,7 +67,9 @@
   border-bottom:1px solid var(--glass-brd);
   backdrop-filter:blur(18px);
 }
-.bar__burger{ display:none; flex-direction:column; gap:4px; background:none; border:none; cursor:pointer; padding:6px; }
+.bar__spacer{ flex:1; }
+.bar__burger{ display:flex; flex-direction:column; gap:4px; background:none; border:1px solid transparent; border-radius:10px; cursor:pointer; padding:8px; flex:none; transition:background .2s ease, border-color .2s ease; }
+.bar__burger:hover{ background:var(--glass); border-color:var(--glass-brd); }
 .bar__burger span{ width:20px; height:2px; background:var(--ink); display:block; border-radius:2px; }
 
 .bar__search{
@@ -583,7 +585,7 @@
 body.theme-aurora{ --void:#0a0518; --navy:#160b2e; --cyan:#7CF7D8; --violet:#FF8FE0; }
 
 /* ============================================================
-   LENS VISUAL INTELLIGENCE — product photo "spin" viewer,
+   PRISM VISUAL INTELLIGENCE — product photo "spin" viewer,
    marketplace buy bar, and an overall louder, more holographic look.
    ============================================================ */
 
@@ -713,7 +715,7 @@ body.theme-aurora{ --void:#0a0518; --navy:#160b2e; --cyan:#7CF7D8; --violet:#FF8
   .spin-viewer__hint{ display:none; }
 }
 /* ============================================================
-   PACK CARDS — every Lens suggestion opens like a reveal pack.
+   PACK CARDS — every Prism suggestion opens like a reveal pack.
    Rarity maps to meaning: Best Overall = Iconic, Best Value = Gold,
    Best Long-Term = Silver, everything else = Standard.
    ============================================================ */
