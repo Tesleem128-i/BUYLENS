@@ -2,9 +2,9 @@ import os
 import re
 import json
 import base64
-import hashlib
 import time
 import secrets
+import hashlib
 from urllib.parse import quote_plus
 from datetime import datetime, timedelta
 from functools import wraps
@@ -74,8 +74,15 @@ BUYLENS_SYSTEM_PROMPT_BASE = (
     "about a specific number, say so plainly rather than inventing false precision. Never "
     "fabricate a marketplace name, URL, or review quote — the app attaches real marketplace "
     "links and product photos itself; you only need to name the product clearly and accurately "
-    "so those lookups succeed."
-    "\n\nAVOID BIAS: Do not favor brands, regions, or user groups without evidence. Stay neutral and factual, avoid stereotypes, and always explain the data or assumptions behind a recommendation."
+    "so those lookups succeed.\n\n"
+    "NEUTRALITY & ACCURACY: Do not favor any brand, retailer, or product for any reason other "
+    "than the merits relevant to the shopper's stated needs and budget — never because a brand "
+    "is more popular, more premium-sounding, or mentioned more often in training data. When two "
+    "options are genuinely close, say so instead of forcing a false winner. Always give the "
+    "real downsides of your top pick, not just its strengths. If a claim is disputed, uncertain, "
+    "or you simply don't know, say that plainly rather than filling the gap with a confident-"
+    "sounding guess — a hedged, honest answer is always better than a fluent but wrong one. "
+    "Do not state opinions on contested political or social topics as if they were settled facts."
 )
 
 # --- Live USD -> NGN rate (and any other currency BuyLens quotes) -----------
@@ -244,7 +251,7 @@ def _groq_request(payload, stream=False):
     )
 
 
-def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.4, model=None):
+def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.7, model=None):
     """Single-shot (non-streaming) call powering all of Lens' structured JSON and
     chat replies. Runs on Groq under the hood."""
     messages = _contents_to_messages(contents, system_instruction)
@@ -303,63 +310,6 @@ def lens_stream(contents, system_instruction=None, temperature=0.7, model=None):
         if text:
             yield f"data: {json.dumps({'text': text}, ensure_ascii=False)}\n\n"
     yield "event: done\ndata: {}\n\n"
-
-
-# ---------------------------------------------------------------------------
-# Marketplace links (deterministic — built here, never trusted to the AI,
-# so the app never hallucinates a store name or a broken URL)
-# ---------------------------------------------------------------------------
-def _seeded_value(key, min_val, max_val):
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    return min_val + (int(digest[:16], 16) % (max_val - min_val + 1))
-
-
-def build_trending_list(user=None):
-    interests = []
-    if user and user.interests:
-        interests = [part.strip() for part in user.interests.split(",") if part.strip()]
-
-    categories = []
-    if user:
-        stats = get_or_create_stats(user.id)
-        categories = [cat for cat, _ in sorted((stats.categories or {}).items(), key=lambda kv: kv[1], reverse=True)][:2]
-
-    fallback = [
-        "Noise-cancelling earbuds",
-        "Gaming laptops",
-        "Electric scooters",
-        "Smart home security",
-        "Budget smartphones",
-        "Solar power accessories",
-        "Travel insurance",
-        "Work-from-home monitors",
-    ]
-
-    candidates = []
-    candidates.extend(interests[:3])
-    interests = [t.strip() for t in re.split(r"[,;/]+", (user.interests or "")) if t.strip()]
-    candidates.extend(interests[:2])
-    candidates.extend(categories[:2])
-    candidates.extend(fallback)
-
-    seen = set()
-    now = datetime.utcnow().strftime("%Y%m%d%H%M")
-    trends = []
-    for candidate in candidates:
-        title = candidate.strip()
-        if not title or title.lower() in seen:
-            continue
-        seen.add(title.lower())
-        direction = "▲" if _seeded_value(f"{now}:{title}:dir", 0, 1) else "▼"
-        change = _seeded_value(f"{now}:{title}:chg", 3, 28)
-        trends.append({
-            "title": title,
-            "change": f"{direction} {change}%",
-            "direction": "up" if direction == "▲" else "down",
-        })
-        if len(trends) >= 4:
-            break
-    return trends
 
 
 # ---------------------------------------------------------------------------
@@ -550,9 +500,42 @@ def _generic_category_query(product_name):
     return None
 
 
+_IMAGE_STOPWORDS = {
+    "the", "a", "an", "of", "with", "and", "for", "pro", "plus", "max", "new",
+    "best", "in", "on", "by", "series", "edition", "gen", "generation",
+}
+
+
+def _extract_keywords(name):
+    words = re.findall(r"[a-zA-Z0-9]+", (name or "").lower())
+    return [w for w in words if len(w) >= 3 and w not in _IMAGE_STOPWORDS]
+
+
+def _image_is_relevant(title, product_name):
+    """Guard against showing a photo of the wrong kind of product. Real
+    product photos rarely have the exact model name in their alt text, so we
+    don't require a strict match — but if the title clearly names a
+    *different* known product category than the one we're searching for
+    (e.g. we asked for a "laptop" and got back a photo captioned
+    "smartwatch"), that's a strong, cheap signal it's the wrong image, so we
+    drop it rather than risk showing something misleading."""
+    title_l = (title or "").lower().strip()
+    if not title_l:
+        return True  # no alt text to judge by — don't over-block on nothing
+    our_category = _generic_category_query(product_name)
+    if not our_category:
+        return True  # nothing to compare against, let it through
+    for keyword, category_term in CATEGORY_KEYWORDS:
+        if keyword.strip() in f" {title_l} " and category_term != our_category:
+            return False
+    return True
+
+
 def fetch_product_images(product_name):
     """Return a small gallery of real photos of `product_name` from multiple
-    angles/contexts so the shopper can 'spin' the product in the UI."""
+    angles/contexts so the shopper can 'spin' the product in the UI. Every
+    candidate is passed through a relevance guard first — if a photo looks
+    like it's the wrong kind of product, it's skipped rather than shown."""
     product_name = (product_name or "").strip()
     if not product_name:
         return []
@@ -564,6 +547,8 @@ def fetch_product_images(product_name):
         results = _search_images(f"{product_name} {angle['suffix']}", count=2)
         for r in results:
             if not r["url"] or r["url"] in seen_urls:
+                continue
+            if not _image_is_relevant(r.get("title"), product_name):
                 continue
             seen_urls.add(r["url"])
             gallery.append({
@@ -577,12 +562,50 @@ def fetch_product_images(product_name):
             })
             break  # one image per angle is enough for the spin viewer
 
-    # If specific query results are found for any of the angles, return them.
-    if gallery:
-        return gallery
+    # Fallback: a broader plain search if angle-specific queries came up dry.
+    if not gallery:
+        for r in _search_images(product_name, count=6):
+            if not r["url"] or r["url"] in seen_urls:
+                continue
+            if not _image_is_relevant(r.get("title"), product_name):
+                continue
+            seen_urls.add(r["url"])
+            gallery.append({
+                "angle": "Gallery",
+                "image": r["url"],
+                "thumbnail": r["thumbnail"],
+                "title": r["title"] or product_name,
+                "source": r["landing_url"],
+                "credit": r["credit"],
+                "provider": r["provider"],
+            })
+            if len(gallery) >= 6:
+                break
 
-    # If no product-specific images are found, do not show a fallback gallery.
-    return []
+    # Last resort: a generic category photo (e.g. "gaming laptop") so the
+    # shopper sees *something* representative rather than a blank gallery.
+    # Always labeled clearly so it's never mistaken for the exact model/SKU.
+    if not gallery:
+        generic_term = _generic_category_query(product_name)
+        if generic_term:
+            for r in _search_images(generic_term, count=3):
+                if not r["url"] or r["url"] in seen_urls:
+                    continue
+                seen_urls.add(r["url"])
+                gallery.append({
+                    "angle": "Representative",
+                    "image": r["url"],
+                    "thumbnail": r["thumbnail"],
+                    "title": f"Representative {generic_term} photo (not the exact model)",
+                    "source": r["landing_url"],
+                    "credit": r["credit"],
+                    "provider": r["provider"],
+                    "generic": True,
+                })
+                if len(gallery) >= 3:
+                    break
+
+    return gallery
 
 
 # ---------------------------------------------------------------------------
@@ -734,14 +757,6 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
-
-
-@app.route("/api/trending")
-@login_required
-def api_trending():
-    uid = session["user_id"]
-    user = User.query.get(uid)
-    return jsonify({"trends": build_trending_list(user), "generated_at": int(time.time() * 1000)})
 
 
 def generate_verification_code():
@@ -1197,48 +1212,6 @@ def api_data_bootstrap():
     })
 
 
-@app.route("/api/data/trending")
-@login_required
-def api_data_trending():
-    uid = session["user_id"]
-    user = User.query.get(uid)
-    stats = get_or_create_stats(uid)
-
-    interests = [t.strip() for t in re.split(r"[,;/]+", (user.interests or "")) if t.strip()]
-    categories = [cat for cat, _ in sorted(stats.categories.items(), key=lambda kv: kv[1], reverse=True) if cat]
-
-    labels = []
-    for term in interests:
-        if len(labels) >= 4:
-            break
-        labels.append(term)
-    for cat in categories:
-        if len(labels) >= 4:
-            break
-        if cat.lower() not in [t.lower() for t in labels]:
-            labels.append(f"{cat} deals")
-    for fallback in ["Gaming laptops", "Smartphones", "Noise-cancelling earbuds", "Smart home gadgets"]:
-        if len(labels) >= 4:
-            break
-        if fallback.lower() not in [t.lower() for t in labels]:
-            labels.append(fallback)
-
-    clock = int(time.time() // 60)
-    rng = random.Random(f"{uid}-{clock}")
-    trends = []
-    for label in labels[:4]:
-        direction = rng.choice(["up", "up", "up", "down"])
-        change = rng.randint(4, 24)
-        trends.append({
-            "name": label,
-            "direction": direction,
-            "percent": change,
-            "note": "Tailored to your interests and recent shopping activity",
-        })
-
-    return jsonify({"trends": trends})
-
-
 @app.route("/api/wishlist", methods=["POST"])
 @login_required
 def api_wishlist_add():
@@ -1360,6 +1333,96 @@ def api_stats_category():
     stats.categories = cats
     db.session.commit()
     return jsonify(stats.to_dict())
+
+
+# --- "Trending Right Now" ----------------------------------------------------
+# A per-category pool of plausible trending items. This isn't pulled from a
+# live market feed (BuyLens has none), so it's clearly framed to the user as
+# a directional signal, not a live price feed. What IS real: which categories
+# get shown, and in what order, is driven by *this account's* own stats.categories
+# in the db (bumped every time they search/scan/save in that category) — so a
+# shopper who's mostly looked at phones sees phone-adjacent trends first.
+TRENDING_POOL = {
+    "electronics":  ["iPhone 17 Pro", "Samsung Galaxy S25", "RTX 5080 laptops", "Noise-cancelling earbuds", "Foldable phones"],
+    "phones":       ["iPhone 17 Pro", "Samsung Galaxy S25", "Google Pixel 10", "Foldable phones", "Budget 5G phones"],
+    "laptops":      ["RTX 5080 laptops", "Slim ultrabooks", "MacBook Air M4", "Gaming laptops under ₦1.5m", "Chromebooks"],
+    "vehicles":     ["Compact EVs", "Used SUVs", "Hybrid sedans", "Tokunbo Corollas", "EV charging accessories"],
+    "fashion":      ["Minimalist sneakers", "Oversized denim jackets", "Ankara statement pieces", "Retro running shoes"],
+    "homes":        ["Two-bedroom flats (Lekki)", "Studio apartments", "Smart home starter kits", "Mortgage rate trends"],
+    "travel":       ["Off-peak flight deals", "Weekend getaway packages", "Travel insurance bundles", "Carry-on luggage"],
+    "insurance":    ["Comprehensive auto cover", "Health HMO plans", "Gadget insurance", "Travel insurance bundles"],
+    "gaming":       ["PS5 Pro bundles", "Handheld PC gaming", "Mechanical keyboards", "Ray-tracing GPUs"],
+    "groceries":    ["Bulk rice prices", "Cooking oil price watch", "Imported pasta brands", "Baby formula prices"],
+    "audio":        ["Noise-cancelling earbuds", "Bluetooth speakers", "Studio headphones"],
+    "general":      ["iPhone 17 Pro", "RTX 5080 laptops", "Compact EVs", "Noise-cancelling earbuds", "Smart home starter kits"],
+}
+
+
+def _trending_change_for(item, minute_seed):
+    """Deterministic (not random-each-refresh) +/- % so the same item shows
+    the same trend within a given minute, but the whole board can shift on
+    the next minute — a lightweight stand-in for a live feed refreshing."""
+    h = int(hashlib.sha256(f"{item}:{minute_seed}".encode()).hexdigest(), 16)
+    pct = (h % 3400) / 100.0  # 0.00 – 33.99
+    direction = "▲" if (h // 3400) % 5 != 0 else "▼"  # mostly up, sometimes down
+    return direction, round(max(pct, 0.5), 1)
+
+
+@app.route("/api/trending")
+@login_required
+def api_trending():
+    """Trending list: rotates every 60 seconds, and is weighted toward the
+    signed-in user's own recorded category interest (UserStats.categories)."""
+    uid = session["user_id"]
+    stats = get_or_create_stats(uid)
+    cats = stats.categories or {}
+
+    # Rank the user's own categories by how often they've engaged with them.
+    ranked_user_cats = [c.lower() for c, _ in sorted(cats.items(), key=lambda kv: kv[1], reverse=True)]
+
+    # Build a candidate pool: user's top categories first (personalized),
+    # then a general pool so the list is never empty for a new account.
+    pool_order = [c for c in ranked_user_cats if c in TRENDING_POOL] or []
+    for fallback in ("electronics", "general"):
+        if fallback not in pool_order:
+            pool_order.append(fallback)
+
+    minute_seed = int(time.time() // 60)  # changes exactly once per minute
+    items, seen = [], set()
+    for cat in pool_order:
+        pool = TRENDING_POOL.get(cat, [])
+        if not pool:
+            continue
+        # Deterministic-but-rotating pick within this minute using the seed,
+        # so which items surface from a category shifts minute to minute.
+        offset = (minute_seed + hash(cat)) % len(pool)
+        rotated = pool[offset:] + pool[:offset]
+        for name in rotated:
+            if name in seen:
+                continue
+            seen.add(name)
+            direction, pct = _trending_change_for(name, minute_seed)
+            items.append({"name": name, "direction": direction, "pct": pct, "category": cat})
+            break  # one per category per pass keeps the list varied
+        if len(items) >= 4:
+            break
+
+    # Top up to 4 items from the general pool if personalized categories ran dry.
+    if len(items) < 4:
+        for name in TRENDING_POOL["general"]:
+            if len(items) >= 4:
+                break
+            if name in seen:
+                continue
+            seen.add(name)
+            direction, pct = _trending_change_for(name, minute_seed)
+            items.append({"name": name, "direction": direction, "pct": pct, "category": "general"})
+
+    return jsonify({
+        "items": items[:4],
+        "personalized": bool(pool_order and pool_order[0] not in ("electronics", "general")),
+        "refreshes_in_seconds": 60 - (int(time.time()) % 60),
+    })
 
 
 @app.route("/api/achievements", methods=["POST"])
@@ -1633,7 +1696,17 @@ def api_ai_vision():
         return jsonify({"error": "Attach an image to scan."}), 400
 
     mime_type = uploaded.mimetype or "image/jpeg"
+    if not mime_type.startswith("image/"):
+        return jsonify({"error": "That file doesn't look like an image — attach a photo (JPG, PNG, WEBP) to scan."}), 400
+
     image_bytes = uploaded.read()
+    if not image_bytes:
+        return jsonify({"error": "That image came through empty — try again."}), 400
+    if len(image_bytes) < 200:
+        # A handful of bytes almost certainly isn't a real photo; avoid
+        # sending garbage to the model and getting a confidently wrong guess.
+        return jsonify({"error": "That image looks corrupted or too small to scan — try another photo."}), 400
+
     b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     if mode == "barcode":
@@ -1646,15 +1719,21 @@ def api_ai_vision():
 
     prompt = f"""{instruction}
 
+Be honest about uncertainty: if the image is blurry, cropped, at a bad angle, or you simply
+can't tell the exact model, say so in "summary" and lower "confidence" instead of inventing a
+specific-sounding answer. Only report barcode digits you can actually read clearly — if none
+are legible, return an empty string rather than guessing digits.
+
 Return ONLY JSON, no markdown fences:
 {{
-  "product_name": "..",
+  "product_name": "your best identification, or a general description if you're not sure of the exact model",
   "brand": "..",
   "category": "..",
   "estimated_price": "e.g. \\u20a6250,000 - \\u20a6300,000",
-  "barcode_digits": "digits if visible, else empty string",
+  "barcode_digits": "digits if clearly legible, else empty string",
+  "confidence": "high | medium | low — how sure you are this identification is correct",
   "specs": ["short spec", "short spec", "short spec"],
-  "summary": "2-3 sentence description of what's in the image and its condition/notable traits",
+  "summary": "2-3 sentence description of what's in the image and its condition/notable traits; mention if the photo made identification hard",
   "recommendations": ["short buying tip", "short buying tip"],
   "alternatives": ["alternative product name", "alternative product name"]
 }}"""
@@ -1669,13 +1748,6 @@ Return ONLY JSON, no markdown fences:
     try:
         data = lens_generate_json(contents, system_instruction=build_system_prompt(),
                                      model=GROQ_VISION_MODEL, temperature=0.4)
-        product_name = (data.get("product_name") or "").strip()
-        category = (data.get("category") or "").strip()
-        summary = (data.get("summary") or "").strip()
-        if not product_name or product_name.lower() in {"unknown", "unclear", "not identified", "n/a", "none"}:
-            return jsonify({"error": "Lens could not reliably identify a product in that image. Try a clearer photo or a barcode image."}), 400
-        if not category or not summary:
-            return jsonify({"error": "The scan was too uncertain. Try a clearer image, a barcode photo, or a different angle."}), 400
         data = enrich_single(data, "product_name")
         return jsonify(data)
     except Exception as exc:

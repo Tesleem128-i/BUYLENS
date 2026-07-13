@@ -117,6 +117,43 @@
     renderProfile();
   }
 
+  /* ---------------- trending panel: refetches every 60s, weighted to this
+     account's own category activity server-side ---------------- */
+  let __trendTimer = null;
+  function renderTrending(payload) {
+    const list = $("#trend-list");
+    const badge = $("#trend-live-badge");
+    if (!list) return;
+    const items = (payload && payload.items) || [];
+    if (!items.length) return;
+    list.classList.add("is-updating");
+    list.innerHTML = items.map((it) => {
+      const up = it.direction !== "▼";
+      return `<li><span>${escapeHtml(it.name)}</span><b class="${up ? "trend-up" : "trend-down"}">${it.direction} ${it.pct}%</b></li>`;
+    }).join("");
+    requestAnimationFrame(() => list.classList.remove("is-updating"));
+    if (badge) badge.title = payload.personalized ? "Personalized to your activity" : "General trending";
+  }
+
+  async function refreshTrending() {
+    try {
+      const data = await getJSON("/api/trending");
+      renderTrending(data);
+    } catch {
+      /* keep showing whatever was last rendered rather than clearing it */
+    }
+  }
+
+  function startTrendingLoop() {
+    refreshTrending();
+    if (__trendTimer) clearInterval(__trendTimer);
+    __trendTimer = setInterval(refreshTrending, 60 * 1000);
+    // also resync the moment a tab regains focus, in case it was backgrounded
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") refreshTrending();
+    });
+  }
+
   function toast(msg) {
     const stack = $("#toast-stack");
     const el = document.createElement("div");
@@ -174,16 +211,19 @@
 
   /* ---------------- navigation ---------------- */
   const railItems = $$(".rail__item[data-view]");
+  const mobileTabItems = $$(".mobile-tabs__item[data-view]");
   const views = $$(".view");
 
   function showView(name) {
     railItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
+    mobileTabItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
     views.forEach((v) => v.classList.toggle("is-active", v.id === "view-" + name));
     if (name === "analytics") requestAnimationFrame(renderCharts);
     if (name === "copilot") renderMemoryCard();
     if (window.innerWidth <= 900) collapseRail(true);
   }
   railItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+  mobileTabItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
   const osRoot = document.querySelector(".os");
   function collapseRail(collapse) {
@@ -288,27 +328,42 @@
       <div class="spin-viewer__credit">${escapeHtml(imageCreditLine(images[0]))}</div>`;
 
     let idx = 0;
+    let liveImages = images.slice();
     const img = node.querySelector(".spin-viewer__img");
     const angleLbl = node.querySelector(".spin-viewer__angle");
-    const dots = $$(".spin-viewer__dot", node);
+    let dots = $$(".spin-viewer__dot", node);
     const creditLbl = node.querySelector(".spin-viewer__credit");
 
+    // If a photo fails to actually load (dead link, wrong content), or the
+    // browser flags it as a broken/near-zero-size image, drop it from the
+    // rotation rather than showing a broken-image icon or a bad photo.
+    img.addEventListener("error", () => {
+      liveImages.splice(idx, 1);
+      const dotsWrap = node.querySelector(".spin-viewer__dots");
+      if (dotsWrap) dotsWrap.innerHTML = liveImages.map((_, i) => `<span class="spin-viewer__dot${i === 0 ? " is-active" : ""}"></span>`).join("");
+      dots = $$(".spin-viewer__dot", node);
+      dots.forEach((d, di) => d.addEventListener("click", () => show(di)));
+      if (!liveImages.length) { renderGalleryEmpty(node, query); return; }
+      show(idx % liveImages.length);
+    });
+
     function show(i) {
-      idx = ((i % images.length) + images.length) % images.length;
+      if (!liveImages.length) return;
+      idx = ((i % liveImages.length) + liveImages.length) % liveImages.length;
       img.style.opacity = 0;
       setTimeout(() => {
-        img.src = images[idx].thumbnail || images[idx].image;
-        img.alt = images[idx].title || query;
+        img.src = liveImages[idx].thumbnail || liveImages[idx].image;
+        img.alt = liveImages[idx].title || query;
         img.style.opacity = 1;
       }, 90);
-      angleLbl.textContent = images[idx].angle || "View";
+      angleLbl.textContent = liveImages[idx].angle || "View";
       dots.forEach((d, di) => d.classList.toggle("is-active", di === idx));
-      creditLbl.textContent = imageCreditLine(images[idx]);
+      creditLbl.textContent = imageCreditLine(liveImages[idx]);
     }
     node.querySelector(".spin-viewer__arrow--prev").addEventListener("click", () => show(idx - 1));
     node.querySelector(".spin-viewer__arrow--next").addEventListener("click", () => show(idx + 1));
     dots.forEach((d, di) => d.addEventListener("click", () => show(di)));
-    node.querySelector(".spin-viewer__expand").addEventListener("click", () => openLightbox(images, idx));
+    node.querySelector(".spin-viewer__expand").addEventListener("click", () => openLightbox(liveImages, idx));
 
     // simple drag-to-rotate for that "view from any direction" feel
     let dragStartX = null;
@@ -594,34 +649,6 @@
       </div>`).join("");
   }
 
-  async function fetchTrending() {
-    try {
-      const data = await getJSON("/api/trending");
-      renderTrending(data.trends || []);
-    } catch {
-      renderTrending([]);
-    }
-  }
-
-  function renderTrending(trends) {
-    const list = $("#trending-list");
-    if (!list) return;
-    if (!trends.length) {
-      list.innerHTML = `<li><span>No trending data available right now.</span><b>—</b></li>`;
-      return;
-    }
-    list.innerHTML = trends.map((item) => `
-      <li class="trend-item trend-item--${item.direction}">
-        <span>${escapeHtml(item.title)}</span>
-        <b>${escapeHtml(item.change)}</b>
-      </li>`).join("");
-  }
-
-  function startTrendingRefresh() {
-    fetchTrending();
-    setInterval(fetchTrending, 60 * 1000);
-  }
-
   /* ================================================================
      AI ASSISTANT (streaming chat)
      ================================================================ */
@@ -884,7 +911,16 @@
   scanFile.addEventListener("change", () => { if (scanFile.files[0]) handleScanFile(scanFile.files[0]); });
 
   function handleScanFile(file) {
+    if (!file.type || !file.type.startsWith("image/")) {
+      toast("That doesn't look like an image — pick a photo (JPG, PNG, WEBP) to scan.");
+      return;
+    }
+    if (file.size > 16 * 1024 * 1024) {
+      toast("That image is too large to scan (16MB max).");
+      return;
+    }
     const url = URL.createObjectURL(file);
+    scanPreview.onerror = () => { scanPreview.style.display = "none"; toast("Couldn't preview that image."); };
     scanPreview.src = url;
     scanPreview.style.display = "block";
     scannerLabel.textContent = "Scanning…";
@@ -947,17 +983,21 @@
     const fd = new FormData();
     fd.append("image", file);
     fd.append("mode", scanMode);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000); // never hang forever
     try {
-      const res = await fetch("/api/ai/vision", { method: "POST", body: fd });
-      const data = await res.json();
+      const res = await fetch("/api/ai/vision", { method: "POST", body: fd, signal: controller.signal });
+      const data = await res.json().catch(() => { throw new Error("Lens sent back something unreadable — try again."); });
       if (!res.ok) throw new Error(data.error || "Scan failed.");
       renderVisionResult(data);
       logHistory("scan", data.product_name || "Scanned product");
       bumpCategory(data.category);
       maybeAward("First AI scan");
     } catch (err) {
-      scanResultPanel.innerHTML = `<p class="empty-note">⚠️ ${escapeHtml(err.message)}</p>`;
+      const msg = err.name === "AbortError" ? "Scan timed out — check your connection and try again." : err.message;
+      scanResultPanel.innerHTML = `<p class="empty-note">⚠️ ${escapeHtml(msg)}</p>`;
     } finally {
+      clearTimeout(timeout);
       scannerLaser.classList.remove("is-active");
       scannerLabel.textContent = "Scan complete";
     }
@@ -965,6 +1005,10 @@
 
   function renderVisionResult(d) {
     const imageQuery = d.image_query || d.product_name || "";
+    const confidence = (d.confidence || "").toLowerCase();
+    const confidenceNote = confidence === "low"
+      ? `<p class="pick__verify pick__verify--low">⚠ Lens isn't confident about this one (low confidence) — the photo may be unclear. Treat this as a rough guess and verify carefully before buying.</p>`
+      : "";
     const inner = `
       <div class="vision-card">
         <div class="vision-card__row"><span>Product</span><b>${escapeHtml(d.product_name || "—")}</b></div>
@@ -976,6 +1020,7 @@
         <p class="panel__body">${escapeHtml(d.summary || "")}</p>
         <div class="vision-card__specs">${(d.specs || []).map((s) => `<span class="tag-pill">${escapeHtml(s)}</span>`).join("")}</div>
         ${marketBar(d.marketplace_links)}
+        ${confidenceNote}
         <p class="pick__verify">⚠ Lens identified this from the photo — confirm exact model, condition &amp; live price on the marketplace before buying.</p>
         <button class="ghost-btn" id="scan-to-wishlist" data-name="${escapeHtml(d.product_name || "")}" data-price="${escapeHtml(d.estimated_price || "")}">+ Add to wishlist</button>
       </div>`;
@@ -1826,5 +1871,5 @@
      init
      ================================================================ */
   loadFromServer();
-  startTrendingRefresh();
+  startTrendingLoop();
 })();

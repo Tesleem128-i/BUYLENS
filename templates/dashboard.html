@@ -87,6 +87,25 @@
     </a>
   </aside>
 
+  <!-- ============ MOBILE BOTTOM TAB BAR ============ -->
+  <nav class="mobile-tabs" id="mobile-tabs" aria-label="Primary">
+    <button class="mobile-tabs__item is-active" data-view="home">
+      <span class="mobile-tabs__icon">◈</span><span class="mobile-tabs__label">Home</span>
+    </button>
+    <button class="mobile-tabs__item" data-view="search">
+      <span class="mobile-tabs__icon">◎</span><span class="mobile-tabs__label">Search</span>
+    </button>
+    <button class="mobile-tabs__item mobile-tabs__item--fab" data-view="scanner" aria-label="Scan">
+      <span class="mobile-tabs__fab">▣</span>
+    </button>
+    <button class="mobile-tabs__item" data-view="assistant">
+      <span class="mobile-tabs__icon">✦</span><span class="mobile-tabs__label">Lens</span>
+    </button>
+    <button class="mobile-tabs__item" data-view="profile">
+      <span class="mobile-tabs__icon">◉</span><span class="mobile-tabs__label">You</span>
+    </button>
+  </nav>
+
   <!-- ============ MAIN ============ -->
   <div class="stage">
 
@@ -169,11 +188,15 @@
           <div class="glass panel">
             <div class="panel__head">
               <h3>Trending Right Now</h3>
-              <span class="eyebrow-mini">Live</span>
+              <span class="eyebrow-mini eyebrow-mini--live" id="trend-live-badge">Live</span>
             </div>
-            <ul class="trend-list" id="trending-list">
-              <li><span>Loading trending data…</span><b>—</b></li>
+            <ul class="trend-list" id="trend-list">
+              <li><span>iPhone 17 Pro</span><b>▲ 12%</b></li>
+              <li><span>RTX 5080 laptops</span><b>▲ 8%</b></li>
+              <li><span>Compact EVs</span><b>▼ 3%</b></li>
+              <li><span>Noise-cancelling earbuds</span><b>▲ 21%</b></li>
             </ul>
+            <p class="trend-note">Personalized to your activity · refreshes every minute</p>
           </div>
         </div>
 

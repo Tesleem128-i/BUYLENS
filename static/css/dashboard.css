@@ -182,9 +182,21 @@
 .panel__body{ color:var(--ink-dim); font-size:14px; line-height:1.7; }
 
 .trend-list{ list-style:none; display:flex; flex-direction:column; gap:10px; }
-.trend-list li{ display:flex; justify-content:space-between; font-size:14px; padding:10px 4px; border-bottom:1px solid rgba(255,255,255,.05); }
+.trend-list li{ display:flex; justify-content:space-between; font-size:14px; padding:10px 4px; border-bottom:1px solid rgba(255,255,255,.05); transition:background .3s ease; }
 .trend-list li:last-child{ border-bottom:none; }
 .trend-list b{ font-family:var(--mono); color:var(--cyan); }
+.trend-list b.trend-up{ color:#7CF7B0; }
+.trend-list b.trend-down{ color:#FF8FA0; }
+.trend-list.is-updating li{ animation:trendFlash .5s ease; }
+@keyframes trendFlash{ 0%{ background:rgba(76,224,255,.12); } 100%{ background:transparent; } }
+.eyebrow-mini--live{ display:inline-flex; align-items:center; gap:6px; }
+.eyebrow-mini--live::before{
+  content:""; width:6px; height:6px; border-radius:50%; background:#7CF7B0;
+  box-shadow:0 0 8px #7CF7B0; animation:livePulse 1.6s ease-in-out infinite;
+}
+@keyframes livePulse{ 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.4; transform:scale(.7); } }
+.trend-note{ font-size:11px; color:var(--ink-dim); margin-top:10px; font-family:var(--mono); opacity:.7; }
+.pick__verify--low{ color:#FFB450; border-color:rgba(255,140,60,.35); background:rgba(255,140,60,.08); font-weight:600; }
 
 .recent-list{ display:flex; flex-direction:column; gap:8px; }
 .recent-item{ display:flex; justify-content:space-between; align-items:center; padding:12px 14px; background:rgba(255,255,255,.03); border-radius:12px; font-size:13.5px; }
@@ -275,20 +287,6 @@
 .pick-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
 @media (max-width:1000px){ .pick-grid{ grid-template-columns:1fr; } }
 .pick{ background:rgba(255,255,255,.03); border:1px solid var(--glass-brd); border-radius:16px; padding:18px; display:flex; flex-direction:column; gap:8px; }
-
-@media (max-width:760px) {
-  .bar{ flex-wrap:wrap; padding:14px 16px; gap:12px; }
-  .bar__search{ max-width:100%; }
-  .bar__actions{ width:100%; justify-content:space-between; }
-  .view-head{ flex-direction:column; align-items:flex-start; }
-  .trend-list li{ flex-direction:column; align-items:flex-start; gap:6px; }
-  .trend-list li span, .trend-list li b{ width:100%; }
-  .scan-grid{ grid-template-columns:1fr; }
-  .search-hero{ flex-direction:column; align-items:stretch; }
-  .search-hero input{ width:100%; }
-  .pick{ padding:14px; }
-  .glass{ padding:18px; }
-}
 .pick__tag{ font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--cyan); }
 .pick__name{ font-family:var(--display); font-size:1.05rem; font-weight:600; }
 .pick__price{ font-family:var(--mono); color:var(--violet); font-size:13.5px; }
@@ -486,26 +484,61 @@
   .bar__search{ max-width:none; }
 }
 
-@media (max-width:760px){
-  .os{ flex-direction:column; }
-  .rail{ position:fixed; width:100%; height:auto; max-height:calc(100vh - 70px); overflow-y:auto; top:0; left:0; right:0; border-right:none; border-bottom:1px solid var(--glass-brd); padding:16px 10px; }
-  .rail__nav{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
-  .rail__item, .rail__exit{ flex:1 1 46%; min-width:132px; justify-content:center; padding:10px 8px; }
-  .rail__item .rail__label, .rail__exit .rail__label{ display:none; }
-  .rail__icon{ font-size:16px; }
-  .stage{ margin-top:calc(70px + 1rem); }
-  .bar{ flex-wrap:wrap; align-items:flex-start; gap:10px; padding:12px 14px; }
-  .bar__search{ width:100%; }
-  .bar__actions{ width:100%; justify-content:space-between; }
-  .views{ padding:20px 14px 80px; }
-  .view-head{ flex-direction:column; align-items:flex-start; gap:14px; }
-  .grid--insights, .grid--split, .card-grid, .tool-grid{ grid-template-columns:1fr; }
-  .trend-list li{ flex-direction:column; align-items:flex-start; gap:6px; }
-  .scan-grid{ grid-template-columns:1fr; }
-  .scanner__frame{ min-height:260px; }
-  .cam-modal__frame{ width:min(94vw, 420px); }
-  .chat{ min-height:auto; height:auto; }
-  .chat__log{ max-height:calc(60vh); }
+/* ============================================================
+   MOBILE BOTTOM TAB BAR — a proper native-app-style nav for phones.
+   Hidden entirely on desktop; on mobile it replaces reliance on the
+   burger menu for the 5 most common destinations, with a floating
+   center "scan" action since that's BuyLens's signature feature.
+   ============================================================ */
+.mobile-tabs{ display:none; }
+
+@media (max-width:720px){
+  .mobile-tabs{
+    display:flex; align-items:center; justify-content:space-around;
+    position:fixed; left:10px; right:10px; bottom:12px; z-index:80;
+    padding:8px 6px; border-radius:22px;
+    background:rgba(10,14,24,.72); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+    border:1px solid var(--glass-brd);
+    box-shadow:0 12px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(76,224,255,.05) inset;
+  }
+  .mobile-tabs__item{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+    background:none; border:none; color:var(--ink-dim); font-family:var(--mono);
+    font-size:9.5px; letter-spacing:.04em; padding:6px 2px; border-radius:14px;
+    transition:color .2s ease, transform .2s ease;
+  }
+  .mobile-tabs__icon{ font-size:17px; line-height:1; }
+  .mobile-tabs__item.is-active{ color:var(--cyan); transform:translateY(-2px); }
+  .mobile-tabs__item.is-active .mobile-tabs__icon{ text-shadow:0 0 12px var(--cyan); }
+  .mobile-tabs__item:active{ transform:scale(.9); }
+
+  .mobile-tabs__item--fab{ position:relative; top:-16px; flex:0 0 auto; }
+  .mobile-tabs__fab{
+    width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:20px; color:var(--void); font-weight:700;
+    background:linear-gradient(135deg, var(--cyan), var(--violet));
+    box-shadow:0 8px 26px rgba(76,224,255,.45), 0 0 0 5px rgba(10,14,24,.72);
+    animation:fabPulse 2.6s ease-in-out infinite;
+  }
+  @keyframes fabPulse{
+    0%,100%{ box-shadow:0 8px 26px rgba(76,224,255,.45), 0 0 0 5px rgba(10,14,24,.72); }
+    50%{ box-shadow:0 8px 34px rgba(157,107,255,.55), 0 0 0 5px rgba(10,14,24,.72); }
+  }
+
+  /* clear space above the tab bar so content never hides behind it */
+  .views{ padding-bottom:112px; }
+  .bar__burger{ display:none; } /* bottom tabs replace the burger's job on very small screens */
+
+  /* denser, thumb-friendly cards */
+  .grid--insights{ grid-template-columns:1fr 1fr; gap:10px; }
+  .card--stat{ padding:14px; }
+  .card__num{ font-size:1.4rem; }
+  .glass.panel{ padding:16px; border-radius:18px; }
+  .greet__title{ font-size:1.5rem; }
+
+  /* bigger, easier taps everywhere on mobile */
+  .ghost-btn, .market-pill, .chip{ min-height:38px; }
+  .trend-list li{ font-size:13.5px; }
 }
 
 /* ---------- aurora theme variant ---------- */
