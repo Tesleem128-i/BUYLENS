@@ -26,7 +26,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "pic")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
-_database_url = os.environ.get("DATABASE_URL", "sqlite:///buylens.db")
+_database_url = os.environ.get("DATABASE_URL", "sqlite:///prism.db")
 # Render (and some other hosts) hand out "postgres://" URLs; SQLAlchemy needs
 # "postgresql://", and we point it at the psycopg3 driver (not psycopg2) since
 # psycopg2 has no prebuilt wheels for newer Python versions yet.
@@ -43,7 +43,7 @@ db = SQLAlchemy(app)
 # --- Brevo (Sendinblue) transactional email ---------------------------------
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
 BREVO_SENDER_EMAIL = os.environ.get("BREVO_SENDER_EMAIL", "muhammedtesleemolatundun@gmail.com")
-BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "BUYLENS")
+BREVO_SENDER_NAME = os.environ.get("BREVO_SENDER_NAME", "PRISM")
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 
 EMAIL_CODE_LENGTH = 6
@@ -56,11 +56,11 @@ GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_TEXT_MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b")
 GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
-# Single boolean flag the app / dashboard consult to know whether "Lens" is online.
-LENS_API_KEY = GROQ_API_KEY
+# Single boolean flag the app / dashboard consult to know whether "Prism" is online.
+PRISM_API_KEY = GROQ_API_KEY
 
-BUYLENS_SYSTEM_PROMPT_BASE = (
-    "You are Lens, the AI shopping intelligence inside BuyLens. Speak with calm, specific "
+PRISM_SYSTEM_PROMPT_BASE = (
+    "You are Prism, the AI shopping intelligence platform. Speak with calm, specific "
     "confidence — never generic. Ground every answer in the exact product/category mentioned. "
     "For comparisons or recommendations, give a clear verdict, concrete tradeoffs (performance, "
     "battery, camera, value, repairability, long-term cost) and a short 'why' per pick. Use "
@@ -85,7 +85,7 @@ BUYLENS_SYSTEM_PROMPT_BASE = (
     "Do not state opinions on contested political or social topics as if they were settled facts."
 )
 
-# --- Live USD -> NGN rate (and any other currency BuyLens quotes) -----------
+# --- Live USD -> NGN rate (and any other currency Prism quotes) -----------
 # The model has no live internet access, so instead of letting it *guess* an
 # exchange rate from stale training data (which is how it invented a wildly
 # wrong ₦/₦ ratio before), we fetch a real rate here and hand it to the model
@@ -121,7 +121,7 @@ def get_usd_to_ngn_rate():
 
 
 def build_system_prompt(memory_notes=None):
-    """System prompt + the current live FX rate, so Lens converts currency
+    """System prompt + the current live FX rate, so Prism converts currency
     correctly instead of inventing a number from memory. Optionally folds in
     a shopper's derived preferences ("AI Shopping Memory") so recommendations
     read as personalized instead of generic."""
@@ -141,7 +141,7 @@ def build_system_prompt(memory_notes=None):
             "state it back as if you're guessing/reading their mind, just quietly "
             "factor it in):\n- " + "\n- ".join(memory_notes)
         )
-    return BUYLENS_SYSTEM_PROMPT_BASE + fx_note + memory_note
+    return PRISM_SYSTEM_PROMPT_BASE + fx_note + memory_note
 
 
 _CURRENCY_NUMBER_RE = re.compile(r"[\d,]+(?:\.\d+)?")
@@ -252,7 +252,7 @@ def _groq_request(payload, stream=False):
 
 
 def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.7, model=None):
-    """Single-shot (non-streaming) call powering all of Lens' structured JSON and
+    """Single-shot (non-streaming) call powering all of Prism's structured JSON and
     chat replies. Runs on Groq under the hood."""
     messages = _contents_to_messages(contents, system_instruction)
     payload = {"model": model or GROQ_TEXT_MODEL, "messages": messages, "temperature": temperature}
@@ -476,7 +476,7 @@ def _openverse_search(query, page_size=1):
             OPENVERSE_IMAGE_URL,
             params={"q": query, "page_size": page_size, "license_type": "commercial,modification"},
             timeout=8,
-            headers={"User-Agent": "BuyLens/1.0 (product visual search)"},
+            headers={"User-Agent": "Prism/1.0 (product visual search)"},
         )
         if resp.status_code != 200:
             return []
@@ -763,12 +763,18 @@ def get_or_create_stats(user_id):
 
 def profile_picture_url(user):
     """Build a servable URL for a user's uploaded profile picture, or None
-    if they haven't set one (callers fall back to an initials avatar)."""
+    if they haven't set one (callers fall back to an initials avatar).
+    Also guards against a stale/broken path (file missing on disk) so a
+    dead reference never renders as a broken image — it just falls back
+    to the initials avatar instead."""
     if not user or not user.profile_picture:
         return None
     filename = user.profile_picture
     if filename.startswith("pic/"):
         filename = filename[len("pic/"):]
+    full_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if not os.path.isfile(full_path):
+        return None
     return url_for("serve_profile_picture", filename=filename)
 
 
@@ -783,7 +789,7 @@ with app.app_context():
             full_name="DemoUser",
             email=demo_email,
             password_hash=generate_password_hash("demo12345"),
-            profile_picture="pic/demo_profile.jpg",
+            profile_picture=None,
             interests="Electronics, Tech, Gadgets",
             is_verified=True,
         )
@@ -831,13 +837,13 @@ def send_verification_email(user):
       <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
                   border-radius:18px;padding:40px;">
         <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
-          BUY<span style="color:#4CE0FF;">LENS</span>
+          PR<span style="color:#4CE0FF;">ISM</span>
         </h1>
         <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
           Verify your email
         </p>
         <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
-          Hi {user.full_name}, use this code to verify your email address and activate your BuyLens account.
+          Hi {user.full_name}, use this code to verify your email address and activate your Prism account.
         </p>
         <div style="display:inline-block;margin-top:24px;padding:16px 28px;border-radius:100px;
                     background:linear-gradient(90deg,#4CE0FF,#9D6BFF);color:#05070C;font-weight:700;
@@ -845,7 +851,7 @@ def send_verification_email(user):
           {code}
         </div>
         <p style="color:#8B93AE;font-size:12px;margin-top:28px;line-height:1.6;">
-          This code expires in 24 hours. If you didn't create a BuyLens account, you can safely ignore this email.
+          This code expires in 24 hours. If you didn't create a Prism account, you can safely ignore this email.
         </p>
       </div>
     </div>
@@ -854,7 +860,7 @@ def send_verification_email(user):
     payload = {
         "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
         "to": [{"email": user.email, "name": user.full_name}],
-        "subject": "Verify your BuyLens account",
+        "subject": "Verify your Prism account",
         "htmlContent": html_content,
     }
     headers = {
@@ -920,13 +926,13 @@ def send_reset_email(user, token):
       <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
                   border-radius:18px;padding:40px;">
         <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
-          BUY<span style="color:#4CE0FF;">LENS</span>
+          PR<span style="color:#4CE0FF;">ISM</span>
         </h1>
         <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
           Reset your password
         </p>
         <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
-          Hi {user.full_name}, we received a request to reset the password on your BuyLens account.
+          Hi {user.full_name}, we received a request to reset the password on your Prism account.
           Click the button below to choose a new one. This link expires in 1 hour.
         </p>
         <a href="{reset_link}"
@@ -949,7 +955,7 @@ def send_reset_email(user, token):
     payload = {
         "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
         "to": [{"email": user.email, "name": user.full_name}],
-        "subject": "Reset your BuyLens password",
+        "subject": "Reset your Prism password",
         "htmlContent": html_content,
     }
     headers = {
@@ -982,7 +988,7 @@ def send_reset_email(user, token):
 # ---------------------------------------------------------------------------
 @app.route("/")
 def index():
-    """Serve the BuyLens cinematic landing page."""
+    """Serve the Prism cinematic landing page."""
     return render_template("index.html")
 
 
@@ -1199,7 +1205,7 @@ def dashboard():
         user=user,
         greeting=greeting,
         first_name=first_name,
-        lens_configured=bool(LENS_API_KEY),
+        lens_configured=bool(PRISM_API_KEY),
         profile_picture_url=profile_picture_url(user),
     )
 
@@ -1473,6 +1479,33 @@ TRENDING_POOL = {
 
 
 
+_INTEREST_CATEGORY_RULES = [
+    ("laptops", ["laptop", "notebook", "macbook", "ultrabook", "chromebook"]),
+    ("phones", ["phone", "iphone", "samsung", "pixel", "smartphone", "android"]),
+    ("vehicles", ["car", "vehicle", "suv", "ev", "sedan", "corolla", "truck"]),
+    ("homes", ["apartment", "flat", "house", "home", "mortgage", "rent", "real estate"]),
+    ("travel", ["flight", "travel", "hotel", "luggage", "trip", "vacation"]),
+    ("insurance", ["insurance", "cover", "hmo", "policy"]),
+    ("gaming", ["game", "gaming", "console", "ps5", "xbox", "playstation"]),
+    ("fashion", ["sneaker", "shoe", "jacket", "dress", "fashion", "denim", "watch", "style"]),
+    ("groceries", ["rice", "grocery", "groceries", "food", "pasta", "formula"]),
+    ("audio", ["earbud", "headphone", "speaker", "airpods", "audio"]),
+    ("electronics", ["camera", "tv", "gadget", "electronic", "gpu", "rtx", "monitor", "tech"]),
+]
+
+
+def _category_for_text(text):
+    """Map a free-text phrase (a declared shopping interest, a search query,
+    etc.) onto one of the TRENDING_POOL category keys, or None if nothing
+    matches. Mirrors guessCategory() in dashboard.js so profile interests
+    and live searches feed the same personalization signal."""
+    t = (text or "").lower()
+    for cat, words in _INTEREST_CATEGORY_RULES:
+        if any(w in t for w in words):
+            return cat
+    return None
+
+
 def _trending_change_for(item, minute_seed):
     """Fallback deterministic (not random-each-refresh) +/- % so the same
     item shows the same trend within a given minute even when Google Trends
@@ -1499,11 +1532,24 @@ def api_trending():
     """Trending list: rotates every 60 seconds, and is weighted toward the
     signed-in user's own recorded category interest (UserStats.categories)."""
     uid = session["user_id"]
+    user = User.query.get(uid)
     stats = get_or_create_stats(uid)
-    cats = stats.categories or {}
+    cats = {k.lower(): v for k, v in (stats.categories or {}).items()}
 
-    # Rank the user's own categories by how often they've engaged with them.
-    ranked_user_cats = [c.lower() for c, _ in sorted(cats.items(), key=lambda kv: kv[1], reverse=True)]
+    # Fold the shopper's *declared* interests (from Profile/Settings) in as a
+    # baseline weight, so trending reflects what they said they care about
+    # even before they've searched anything — not just derived click/search
+    # history. Search-driven weight (bumped every time they actually search,
+    # scan, or save something) still stacks on top and can overtake this.
+    if user and user.interests:
+        for part in user.interests.split(","):
+            cat = _category_for_text(part.strip())
+            if cat:
+                cats[cat] = cats.get(cat, 0) + 2
+
+    # Rank the user's own categories by how often they've engaged with them
+    # (declared interest + actual activity combined).
+    ranked_user_cats = [c for c, _ in sorted(cats.items(), key=lambda kv: kv[1], reverse=True)]
 
     # Build a candidate pool: user's top categories first (personalized),
     # then a general pool so the list is never empty for a new account.
@@ -1583,10 +1629,10 @@ def api_data_clear():
 
 
 # ---------------------------------------------------------------------------
-# AI Buying Intelligence API (Groq-powered, "Lens" branded)
+# AI Buying Intelligence API (Groq-powered, "Prism" branded)
 # ---------------------------------------------------------------------------
 def _lens_error_response(exc):
-    app.logger.error("Lens engine error: %s", exc)
+    app.logger.error("Prism engine error: %s", exc)
     return jsonify({"error": str(exc)}), 502
 
 
@@ -1620,9 +1666,9 @@ def api_ai_chat_stream():
     # the (cheaper/faster) text model.
     chat_model = GROQ_VISION_MODEL if image_b64 else None
 
-    if not LENS_API_KEY:
+    if not PRISM_API_KEY:
         def _no_key():
-            yield f"data: {json.dumps({'text': '⚠️ Lens\u2019 AI engine is not configured on the server right now. Add a GROQ_API_KEY to your environment to activate live AI answers.'})}\n\n"
+            yield f"data: {json.dumps({'text': '⚠️ Prism\u2019s AI engine is not configured on the server right now. Add a GROQ_API_KEY to your environment to activate live AI answers.'})}\n\n"
             yield "event: done\ndata: {}\n\n"
         return Response(stream_with_context(_no_key()), mimetype="text/event-stream")
 
@@ -1682,7 +1728,7 @@ def api_ai_recommend():
     budget = (body.get("budget") or "").strip()
     currency = (body.get("currency") or "NGN").strip()
     if not need:
-        return jsonify({"error": "Tell Lens what you're shopping for."}), 400
+        return jsonify({"error": "Tell Prism what you're shopping for."}), 400
 
     prompt = f"""Shopper need: "{need}"
 Budget: {budget or 'not specified'} {currency}
@@ -1713,7 +1759,7 @@ def api_ai_compare():
     body = request.get_json(force=True, silent=True) or {}
     products = [p.strip() for p in body.get("products", []) if p and p.strip()]
     if len(products) < 2:
-        return jsonify({"error": "Give Lens at least two products to compare."}), 400
+        return jsonify({"error": "Give Prism at least two products to compare."}), 400
 
     prompt = f"""Compare these products for a shopper: {', '.join(products)}
 
@@ -1750,7 +1796,7 @@ def api_ai_reviews():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens summarize reviews for?"}), 400
+        return jsonify({"error": "Which product should Prism summarize reviews for?"}), 400
 
     prompt = f"""Summarize the general review sentiment for: "{product}"
 
@@ -1815,7 +1861,7 @@ Return ONLY JSON, no markdown fences:
 @app.route("/api/ai/vision", methods=["POST"])
 @login_required
 def api_ai_vision():
-    """AI Camera / barcode scanner — Lens Vision analysis of an uploaded image."""
+    """AI Camera / barcode scanner — Prism Vision analysis of an uploaded image."""
     uploaded = request.files.get("image")
     mode = (request.form.get("mode") or "product").strip()  # 'product' | 'barcode'
     if not uploaded or not uploaded.filename:
@@ -1886,7 +1932,7 @@ def api_ai_price_history():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product's price trend should Lens explain?"}), 400
+        return jsonify({"error": "Which product's price trend should Prism explain?"}), 400
 
     prompt = f"""Give a plausible 12-month relative price-index trend (100 = today's price, so
 past months are typically >100 if prices have been falling, or model whatever realistic pattern
@@ -1915,7 +1961,7 @@ Return ONLY JSON, no markdown fences:
 @login_required
 def api_ai_product_images():
     """Return a small multi-angle photo gallery for a named product, so the
-    shopper can 'spin' and inspect it visually before Lens even talks pricing."""
+    shopper can 'spin' and inspect it visually before Prism even talks pricing."""
     body = request.get_json(force=True, silent=True) or {}
     name = (body.get("name") or "").strip()
     if not name:
@@ -2021,7 +2067,7 @@ def api_ai_shopping_agent():
     budget = (body.get("budget") or "").strip()
     currency = (body.get("currency") or "NGN").strip()
     if not need:
-        return jsonify({"error": "Tell Lens what to go find."}), 400
+        return jsonify({"error": "Tell Prism what to go find."}), 400
 
     stores = ["Jumia", "Konga", "Amazon", "AliExpress", "eBay", "Temu"]
     prompt = f"""Shopper wants: "{need}"
@@ -2064,7 +2110,7 @@ def api_ai_budget_planner():
     currency = (body.get("currency") or "NGN").strip()
     goal = (body.get("goal") or "").strip()
     if not budget or not goal:
-        return jsonify({"error": "Tell Lens the goal and the total budget."}), 400
+        return jsonify({"error": "Tell Prism the goal and the total budget."}), 400
 
     prompt = f"""Shopper's goal: "{goal}"
 Total budget: {budget} {currency}
@@ -2103,7 +2149,7 @@ def api_ai_buy_or_wait():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens predict on?"}), 400
+        return jsonify({"error": "Which product should Prism predict on?"}), 400
 
     prompt = f"""Should a shopper buy this now or wait: "{product}"
 
@@ -2173,7 +2219,7 @@ def api_ai_lifespan():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens estimate lifespan for?"}), 400
+        return jsonify({"error": "Which product should Prism estimate lifespan for?"}), 400
 
     prompt = f"""Estimate the realistic long-term ownership profile of: "{product}"
 
@@ -2242,7 +2288,7 @@ def api_ai_resale_predictor():
     buy_price = (body.get("buy_price") or "").strip()
     currency = (body.get("currency") or "NGN").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens predict resale value for?"}), 400
+        return jsonify({"error": "Which product should Prism predict resale value for?"}), 400
 
     prompt = f"""Project resale value over time for: "{product}"
 {"Purchase price: " + buy_price + " " + currency if buy_price else "Assume a realistic current retail price."}
@@ -2277,7 +2323,7 @@ def api_ai_compatibility():
     product = (body.get("product") or "").strip()
     system_desc = (body.get("system") or "").strip()
     if not product or not system_desc:
-        return jsonify({"error": "Give Lens the part and a description of your current PC."}), 400
+        return jsonify({"error": "Give Prism the part and a description of your current PC."}), 400
 
     prompt = f"""A shopper wants to add this part: "{product}"
 Their current system: "{system_desc}"
@@ -2316,7 +2362,7 @@ def api_ai_timeline():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens map a timeline for?"}), 400
+        return jsonify({"error": "Which product should Prism map a timeline for?"}), 400
 
     prompt = f"""Build a short timeline of notable moments for: "{product}"
 (release, notable price changes, known issues/fixes, and a verdict on the best time
@@ -2352,7 +2398,7 @@ def api_ai_community():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens summarize owner sentiment for?"}), 400
+        return jsonify({"error": "Which product should Prism summarize owner sentiment for?"}), 400
 
     prompt = f"""Estimate typical owner sentiment for: "{product}", framed as if summarizing
 a community of past buyers (this is a plausible estimate from general review sentiment
@@ -2386,7 +2432,7 @@ def api_ai_score():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     if not product:
-        return jsonify({"error": "Which product should Lens score?"}), 400
+        return jsonify({"error": "Which product should Prism score?"}), 400
 
     prompt = f"""Score this product across key buying dimensions: "{product}"
 
