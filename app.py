@@ -362,6 +362,10 @@ def build_trending_list(user=None):
     return trends
 
 
+# ---------------------------------------------------------------------------
+# Marketplace links (deterministic — built here, never trusted to the AI,
+# so the app never hallucinates a store name or a broken URL)
+# ---------------------------------------------------------------------------
 def marketplace_links(name):
     q = quote_plus(name or "")
     if not q:
@@ -395,14 +399,6 @@ def enrich_single(payload, name_field="product"):
         payload["marketplace_links"] = marketplace_links(nm)
         payload["image_query"] = nm
     return payload
-
-
-@app.route("/api/trending")
-@login_required
-def api_trending():
-    uid = session["user_id"]
-    user = User.query.get(uid)
-    return jsonify({"trends": build_trending_list(user), "generated_at": int(time.time() * 1000)})
 
 
 # --- Product image lookup ---------------------------------------------------
@@ -738,6 +734,14 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+@app.route("/api/trending")
+@login_required
+def api_trending():
+    uid = session["user_id"]
+    user = User.query.get(uid)
+    return jsonify({"trends": build_trending_list(user), "generated_at": int(time.time() * 1000)})
 
 
 def generate_verification_code():
