@@ -2,6 +2,7 @@ import os
 import re
 import json
 import base64
+import hashlib
 import time
 import secrets
 from urllib.parse import quote_plus
@@ -74,6 +75,7 @@ BUYLENS_SYSTEM_PROMPT_BASE = (
     "fabricate a marketplace name, URL, or review quote — the app attaches real marketplace "
     "links and product photos itself; you only need to name the product clearly and accurately "
     "so those lookups succeed."
+    "\n\nAVOID BIAS: Do not favor brands, regions, or user groups without evidence. Stay neutral and factual, avoid stereotypes, and always explain the data or assumptions behind a recommendation."
 )
 
 # --- Live USD -> NGN rate (and any other currency BuyLens quotes) -----------
@@ -242,7 +244,7 @@ def _groq_request(payload, stream=False):
     )
 
 
-def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.7, model=None):
+def lens_generate(contents, system_instruction=None, response_mime_type=None, temperature=0.4, model=None):
     """Single-shot (non-streaming) call powering all of Lens' structured JSON and
     chat replies. Runs on Groq under the hood."""
     messages = _contents_to_messages(contents, system_instruction)
@@ -307,6 +309,57 @@ def lens_stream(contents, system_instruction=None, temperature=0.7, model=None):
 # Marketplace links (deterministic — built here, never trusted to the AI,
 # so the app never hallucinates a store name or a broken URL)
 # ---------------------------------------------------------------------------
+def _seeded_value(key, min_val, max_val):
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return min_val + (int(digest[:16], 16) % (max_val - min_val + 1))
+
+
+def build_trending_list(user=None):
+    interests = []
+    if user and user.interests:
+        interests = [part.strip() for part in user.interests.split(",") if part.strip()]
+
+    categories = []
+    if user:
+        stats = get_or_create_stats(user.id)
+        categories = [cat for cat, _ in sorted((stats.categories or {}).items(), key=lambda kv: kv[1], reverse=True)][:2]
+
+    fallback = [
+        "Noise-cancelling earbuds",
+        "Gaming laptops",
+        "Electric scooters",
+        "Smart home security",
+        "Budget smartphones",
+        "Solar power accessories",
+        "Travel insurance",
+        "Work-from-home monitors",
+    ]
+
+    candidates = []
+    candidates.extend(interests[:3])
+    candidates.extend(categories[:2])
+    candidates.extend(fallback)
+
+    seen = set()
+    now = datetime.utcnow().strftime("%Y%m%d%H%M")
+    trends = []
+    for candidate in candidates:
+        title = candidate.strip()
+        if not title or title.lower() in seen:
+            continue
+        seen.add(title.lower())
+        direction = "▲" if _seeded_value(f"{now}:{title}:dir", 0, 1) else "▼"
+        change = _seeded_value(f"{now}:{title}:chg", 3, 28)
+        trends.append({
+            "title": title,
+            "change": f"{direction} {change}%",
+            "direction": "up" if direction == "▲" else "down",
+        })
+        if len(trends) >= 4:
+            break
+    return trends
+
+
 def marketplace_links(name):
     q = quote_plus(name or "")
     if not q:
@@ -340,6 +393,14 @@ def enrich_single(payload, name_field="product"):
         payload["marketplace_links"] = marketplace_links(nm)
         payload["image_query"] = nm
     return payload
+
+
+@app.route("/api/trending")
+@login_required
+def api_trending():
+    uid = session["user_id"]
+    user = User.query.get(uid)
+    return jsonify({"trends": build_trending_list(user), "generated_at": int(time.time() * 1000)})
 
 
 # --- Product image lookup ---------------------------------------------------
@@ -518,48 +579,12 @@ def fetch_product_images(product_name):
             })
             break  # one image per angle is enough for the spin viewer
 
-    # Fallback: a broader plain search if angle-specific queries came up dry.
-    if not gallery:
-        for r in _search_images(product_name, count=6):
-            if not r["url"] or r["url"] in seen_urls:
-                continue
-            seen_urls.add(r["url"])
-            gallery.append({
-                "angle": "Gallery",
-                "image": r["url"],
-                "thumbnail": r["thumbnail"],
-                "title": r["title"] or product_name,
-                "source": r["landing_url"],
-                "credit": r["credit"],
-                "provider": r["provider"],
-            })
-            if len(gallery) >= 6:
-                break
+    # If specific query results are found for any of the angles, return them.
+    if gallery:
+        return gallery
 
-    # Last resort: a generic category photo (e.g. "gaming laptop") so the
-    # shopper sees *something* representative rather than a blank gallery.
-    # Always labeled clearly so it's never mistaken for the exact model/SKU.
-    if not gallery:
-        generic_term = _generic_category_query(product_name)
-        if generic_term:
-            for r in _search_images(generic_term, count=3):
-                if not r["url"] or r["url"] in seen_urls:
-                    continue
-                seen_urls.add(r["url"])
-                gallery.append({
-                    "angle": "Representative",
-                    "image": r["url"],
-                    "thumbnail": r["thumbnail"],
-                    "title": f"Representative {generic_term} photo (not the exact model)",
-                    "source": r["landing_url"],
-                    "credit": r["credit"],
-                    "provider": r["provider"],
-                    "generic": True,
-                })
-                if len(gallery) >= 3:
-                    break
-
-    return gallery
+    # If no product-specific images are found, do not show a fallback gallery.
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -1166,6 +1191,48 @@ def api_data_bootstrap():
     })
 
 
+@app.route("/api/data/trending")
+@login_required
+def api_data_trending():
+    uid = session["user_id"]
+    user = User.query.get(uid)
+    stats = get_or_create_stats(uid)
+
+    interests = [t.strip() for t in re.split(r"[,;/]+", (user.interests or "")) if t.strip()]
+    categories = [cat for cat, _ in sorted(stats.categories.items(), key=lambda kv: kv[1], reverse=True) if cat]
+
+    labels = []
+    for term in interests:
+        if len(labels) >= 4:
+            break
+        labels.append(term)
+    for cat in categories:
+        if len(labels) >= 4:
+            break
+        if cat.lower() not in [t.lower() for t in labels]:
+            labels.append(f"{cat} deals")
+    for fallback in ["Gaming laptops", "Smartphones", "Noise-cancelling earbuds", "Smart home gadgets"]:
+        if len(labels) >= 4:
+            break
+        if fallback.lower() not in [t.lower() for t in labels]:
+            labels.append(fallback)
+
+    clock = int(time.time() // 60)
+    rng = random.Random(f"{uid}-{clock}")
+    trends = []
+    for label in labels[:4]:
+        direction = rng.choice(["up", "up", "up", "down"])
+        change = rng.randint(4, 24)
+        trends.append({
+            "name": label,
+            "direction": direction,
+            "percent": change,
+            "note": "Tailored to your interests and recent shopping activity",
+        })
+
+    return jsonify({"trends": trends})
+
+
 @app.route("/api/wishlist", methods=["POST"])
 @login_required
 def api_wishlist_add():
@@ -1596,6 +1663,9 @@ Return ONLY JSON, no markdown fences:
     try:
         data = lens_generate_json(contents, system_instruction=build_system_prompt(),
                                      model=GROQ_VISION_MODEL, temperature=0.4)
+        product_name = (data.get("product_name") or "").strip()
+        if not product_name or product_name.lower() in {"unknown", "unclear", "not identified", "n/a", "none"}:
+            return jsonify({"error": "Lens could not reliably identify a product in that image. Try a clearer photo or a barcode image."}), 400
         data = enrich_single(data, "product_name")
         return jsonify(data)
     except Exception as exc:

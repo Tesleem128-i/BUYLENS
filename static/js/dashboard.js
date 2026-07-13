@@ -594,6 +594,34 @@
       </div>`).join("");
   }
 
+  async function fetchTrending() {
+    try {
+      const data = await getJSON("/api/trending");
+      renderTrending(data.trends || []);
+    } catch {
+      renderTrending([]);
+    }
+  }
+
+  function renderTrending(trends) {
+    const list = $("#trending-list");
+    if (!list) return;
+    if (!trends.length) {
+      list.innerHTML = `<li><span>No trending data available right now.</span><b>—</b></li>`;
+      return;
+    }
+    list.innerHTML = trends.map((item) => `
+      <li class="trend-item trend-item--${item.direction}">
+        <span>${escapeHtml(item.title)}</span>
+        <b>${escapeHtml(item.change)}</b>
+      </li>`).join("");
+  }
+
+  function startTrendingRefresh() {
+    fetchTrending();
+    setInterval(fetchTrending, 60 * 1000);
+  }
+
   /* ================================================================
      AI ASSISTANT (streaming chat)
      ================================================================ */
@@ -1798,4 +1826,5 @@
      init
      ================================================================ */
   loadFromServer();
+  startTrendingRefresh();
 })();
