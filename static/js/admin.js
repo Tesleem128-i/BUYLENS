@@ -97,12 +97,23 @@
       return;
     }
     tbody.innerHTML = rows.map((r) => `
-      <tr>
+      <tr data-user-id="${r.id}">
         <td>${escapeHtml(r.name || "—")}</td>
         <td>${escapeHtml(r.email || "—")}</td>
         <td>${escapeHtml(r.country || "—")}</td>
         <td>${r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"}</td>
       </tr>`).join("");
+    $$("#admin-signups-table tbody tr").forEach((tr) => {
+      tr.addEventListener("click", () => openUserModal(tr.dataset.userId));
+    });
+  }
+
+  function renderAnomalyBanner(days) {
+    const banner = $("#admin-anomaly-banner");
+    if (!days || !days.length) { banner.hidden = true; return; }
+    const formatted = days.map((d) => new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    banner.hidden = false;
+    banner.textContent = `⚠ Unusually high failed-login activity on ${formatted.join(", ")} — worth a closer look for brute-force attempts.`;
   }
 
   function escapeHtml(str) {
@@ -115,6 +126,7 @@
       renderKPIs(data);
       renderCharts(data);
       renderSignupsTable(data.recent_signups);
+      renderAnomalyBanner(data.failed_login_anomaly_days);
     } catch (err) {
       console.error(err);
     }
@@ -127,6 +139,69 @@
       refresh(Number(btn.dataset.days));
     });
   });
+
+  /* ---------------- export ---------------- */
+  $$("#admin-export button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const activeDays = $("#admin-range button.is-active")?.dataset.days || 30;
+      window.location.href = `/api/admin/export?type=${btn.dataset.type}&days=${activeDays}`;
+    });
+  });
+
+  /* ---------------- per-user drill-down ---------------- */
+  const modal = $("#admin-user-modal");
+  const modalBody = $("#admin-modal-body");
+  function closeModal() { modal.hidden = true; }
+  $("#admin-modal-close").addEventListener("click", closeModal);
+  $(".admin-modal__backdrop", modal).addEventListener("click", closeModal);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+  function fmtDate(iso) {
+    return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  }
+
+  async function openUserModal(userId) {
+    modal.hidden = false;
+    modalBody.innerHTML = `<p class="admin-empty">Loading…</p>`;
+    try {
+      const res = await fetch(`/api/admin/user/${userId}`, { headers: { Accept: "application/json" } });
+      const u = await res.json();
+      if (!res.ok) throw new Error(u.error || "Couldn't load that user.");
+
+      const badges = [
+        u.is_verified ? `<span class="admin-user__badge admin-user__badge--ok">Verified</span>` : `<span class="admin-user__badge admin-user__badge--warn">Unverified</span>`,
+        u.currently_locked_out ? `<span class="admin-user__badge admin-user__badge--warn">Locked out</span>` : "",
+        u.country ? `<span class="admin-user__badge">${escapeHtml(u.country)}</span>` : "",
+        u.currency ? `<span class="admin-user__badge">${escapeHtml(u.currency)}</span>` : "",
+      ].filter(Boolean).join("");
+
+      const topCats = (u.top_categories || []).map(([name, count]) => `<li><span>${escapeHtml(name)}</span><span>${count}</span></li>`).join("") || `<li><span>No activity yet</span></li>`;
+      const logins = (u.recent_logins || []).slice(0, 8).map((l) => `<li><span>${l.success ? "✅ Success" : "❌ Failed"} — ${escapeHtml(l.ip || "unknown IP")}</span><span>${fmtDate(l.ts)}</span></li>`).join("") || `<li><span>No login history</span></li>`;
+      const features = (u.recent_features || []).slice(0, 8).map((f) => `<li><span>${escapeHtml(f.feature)}</span><span>${fmtDate(f.ts)}</span></li>`).join("") || `<li><span>No feature activity</span></li>`;
+
+      modalBody.innerHTML = `
+        <div class="admin-user__name">${escapeHtml(u.full_name || "—")}</div>
+        <div class="admin-user__email">${escapeHtml(u.email || "—")} · Joined ${fmtDate(u.created_at)} · Last login ${fmtDate(u.last_login)}</div>
+        <div class="admin-user__badges">${badges}</div>
+        <div class="admin-user__stats">
+          <div class="admin-user__stat"><span>Searches</span><span>${u.searches ?? 0}</span></div>
+          <div class="admin-user__stat"><span>Wishlist items</span><span>${u.wishlist_count ?? 0}</span></div>
+          <div class="admin-user__stat"><span>History items</span><span>${u.history_count ?? 0}</span></div>
+          <div class="admin-user__stat"><span>Accepted picks</span><span>${u.accepted_recommendations ?? 0}</span></div>
+          <div class="admin-user__stat"><span>Failed logins</span><span>${u.failed_login_attempts ?? 0}</span></div>
+          <div class="admin-user__stat"><span>Saved amount</span><span>${(u.saved_amount ?? 0).toLocaleString()}</span></div>
+        </div>
+        <div class="admin-user__section-title">Top categories</div>
+        <ul class="admin-user__list">${topCats}</ul>
+        <div class="admin-user__section-title">Recent logins</div>
+        <ul class="admin-user__list">${logins}</ul>
+        <div class="admin-user__section-title">Recent activity</div>
+        <ul class="admin-user__list">${features}</ul>
+      `;
+    } catch (err) {
+      modalBody.innerHTML = `<p class="admin-empty">⚠️ ${escapeHtml(err.message)}</p>`;
+    }
+  }
 
   refresh(7);
 })();

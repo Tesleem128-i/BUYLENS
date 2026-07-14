@@ -1,6 +1,9 @@
 import os
 import re
+import io
+import csv
 import json
+import statistics
 import base64
 import time
 import secrets
@@ -41,6 +44,29 @@ elif _database_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = _database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+
+# Render (and most PaaS hosts) terminate TLS at a load balancer and forward
+# plain HTTP to the app, setting X-Forwarded-Proto/X-Forwarded-For headers.
+# Without ProxyFix, `request.is_secure` and `request.remote_addr` would be
+# wrong on every request — breaking the HTTPS redirect below and making
+# every rate-limit/lockout keyed off the load balancer's IP instead of the
+# real visitor's.
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# Render sets RENDER=true on every deployed service; locally that's unset,
+# so HTTPS enforcement and secure-only cookies stay off for local dev (where
+# there's no TLS) and turn on automatically once deployed.
+IS_PRODUCTION = os.environ.get("RENDER") == "true" or os.environ.get("FORCE_HTTPS") == "true"
+app.config["SESSION_COOKIE_HTTPONLY"] = True       # JS can never read the session cookie
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"       # blocks it being sent on cross-site requests
+app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION  # HTTPS-only cookie once deployed
+
+
+@app.before_request
+def _enforce_https():
+    if IS_PRODUCTION and not request.is_secure:
+        return redirect(request.url.replace("http://", "https://", 1), code=301)
 
 db = SQLAlchemy(app)
 
@@ -85,6 +111,64 @@ ADMIN_EMAILS = {"muhammedtesleemolatundun@gmail.com"}
 
 def is_admin_email(email):
     return (email or "").strip().lower() in ADMIN_EMAILS
+
+
+# --- File upload validation ---------------------------------------------------
+# A file's extension and the browser's declared Content-Type are both just
+# labels the uploader chose — neither proves the bytes are actually a safe
+# image. This decodes the real pixel data with Pillow before anything is
+# saved to disk or sent to the AI vision model, so a renamed script or a
+# corrupt/malicious file gets rejected instead of silently accepted.
+ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_PROFILE_PICTURE_BYTES = 5 * 1024 * 1024   # 5MB
+MAX_SCAN_IMAGE_BYTES = 8 * 1024 * 1024        # 8MB
+
+
+def validate_image_upload(file_storage, max_bytes):
+    """Returns (ok: bool, error_message_or_None, raw_bytes_or_None, mime_or_None).
+    Actually decodes the image (Pillow) rather than trusting the filename
+    extension or the browser-supplied Content-Type header, both of which an
+    attacker fully controls."""
+    if not file_storage or not file_storage.filename:
+        return False, "No file was attached.", None, None
+
+    data = file_storage.read()
+    file_storage.seek(0)
+    if not data:
+        return False, "That file came through empty.", None, None
+    if len(data) > max_bytes:
+        return False, f"That image is too large — please use one under {max_bytes // (1024*1024)}MB.", None, None
+
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data))
+        img.verify()  # raises if the pixel data is corrupt/not actually an image
+        detected_mime = Image.MIME.get(img.format, "")
+    except Exception:
+        return False, "That file doesn't look like a valid image — try a JPG, PNG, WEBP, or GIF.", None, None
+
+    if detected_mime not in ALLOWED_IMAGE_MIME_TYPES:
+        return False, "Only JPG, PNG, WEBP, and GIF images are supported.", None, None
+
+    return True, None, data, detected_mime
+
+
+_IMAGE_EXT_BY_MIME = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+
+
+def save_uploaded_profile_picture(file_storage):
+    """Validate + save a profile picture. Returns (relative_path_or_None,
+    error_message_or_None)."""
+    ok, error, data, mime = validate_image_upload(file_storage, MAX_PROFILE_PICTURE_BYTES)
+    if not ok:
+        return None, error
+    ext = _IMAGE_EXT_BY_MIME.get(mime, "jpg")
+    filename = secure_filename(file_storage.filename) or f"upload.{ext}"
+    unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{filename}"
+    upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+    with open(upload_path, "wb") as f:
+        f.write(data)
+    return os.path.join("pic", unique_name).replace("\\", "/"), None
 
 
 # --- Brevo (Sendinblue) transactional email ---------------------------------
@@ -955,12 +1039,10 @@ def signup():
         uploaded_file = request.files.get("profile_picture")
         saved_path = None
         if uploaded_file and uploaded_file.filename:
-            filename = secure_filename(uploaded_file.filename)
-            if filename:
-                unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{filename}"
-                upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
-                uploaded_file.save(upload_path)
-                saved_path = os.path.join("pic", unique_name).replace("\\", "/")
+            saved_path, upload_error = save_uploaded_profile_picture(uploaded_file)
+            if upload_error:
+                flash(upload_error, "error")
+                return render_template("signup.html", full_name=full_name, email=email, interest=interests)
 
         user = User(
             full_name=full_name,
@@ -1078,6 +1160,7 @@ def login():
         db.session.add(LoginEvent(user_id=user.id, email=email, success=True, ip=client_ip))
         db.session.commit()
 
+        session.clear()
         session["user_id"] = user.id
         session["user_name"] = user.full_name
         return redirect(url_for("dashboard"))
@@ -1136,12 +1219,57 @@ def reset_password(token):
         user.password_hash = generate_password_hash(password)
         user.reset_token = None
         user.reset_token_expiry = None
+        user.failed_login_attempts = 0
+        user.lockout_until = None
         db.session.commit()
+        send_password_changed_email(user)
 
         flash("Password updated. Log in with your new password.", "info")
         return redirect(url_for("login"))
 
     return render_template("reset_password.html", token=token)
+
+
+def send_password_changed_email(user):
+    """Security notification — sent whenever this account's password changes,
+    so the real owner finds out immediately if someone else reset it."""
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
+          PR<span style="color:#4CE0FF;">ISM</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          Security notice
+        </p>
+        <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
+          Hi {user.full_name}, the password on your Prism account ({user.email}) was just changed.
+        </p>
+        <p style="color:#8B93AE;font-size:13px;margin-top:20px;line-height:1.6;">
+          If this was you, no action is needed. If you didn't make this change, someone else may have
+          access to your account — reset your password again immediately and consider changing the
+          password on any accounts that share it.
+        </p>
+      </div>
+    </div>
+    """
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.full_name}],
+        "subject": "Your Prism password was changed",
+        "htmlContent": html_content,
+    }
+    headers = {"accept": "application/json", "api-key": BREVO_API_KEY or "", "content-type": "application/json"}
+    if not BREVO_API_KEY:
+        app.logger.warning("BREVO_API_KEY is not set — skipping password-changed notification.")
+        return False
+    try:
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        return response.status_code in (200, 201)
+    except requests.RequestException as exc:
+        app.logger.error("Password-changed notification failed: %s", exc)
+        return False
 
 
 @app.route("/logout")
@@ -1170,6 +1298,18 @@ def _bucket_by_day(timestamps, days=14):
     return buckets
 
 
+def _detect_anomaly_days(bucket, min_count=5, z=2.0):
+    """Flag days whose count is both meaningfully above the range's average
+    AND clears an absolute floor (so 2 failed logins on a quiet day for a
+    brand-new app doesn't get dramatically flagged as an 'anomaly')."""
+    values = list(bucket.values())
+    if len(values) < 3 or not any(values):
+        return []
+    mean = statistics.mean(values)
+    stdev = statistics.pstdev(values) or 1.0
+    return [day for day, v in bucket.items() if v >= min_count and v > mean + z * stdev]
+
+
 @app.route("/api/admin/analytics")
 @admin_required
 def api_admin_analytics():
@@ -1188,6 +1328,7 @@ def api_admin_analytics():
     total_logins = sum(1 for l in logins if l.success)
     total_failed_logins = sum(1 for l in logins if not l.success)
     currently_locked_out = User.query.filter(User.lockout_until != None, User.lockout_until > datetime.utcnow()).count()  # noqa: E711
+    failed_login_anomalies = _detect_anomaly_days(failed_logins_by_day)
 
     events = FeatureEvent.query.filter(FeatureEvent.ts >= since).all()
     feature_counts, view_counts, leaving_counts = {}, {}, {}
@@ -1209,7 +1350,7 @@ def api_admin_analytics():
 
     recent_signups = (
         User.query.order_by(User.created_at.desc()).limit(10)
-        .with_entities(User.full_name, User.email, User.created_at, User.country).all()
+        .with_entities(User.id, User.full_name, User.email, User.created_at, User.country).all()
     )
 
     return jsonify({
@@ -1223,14 +1364,90 @@ def api_admin_analytics():
         "signups_by_day": signups_by_day,
         "logins_by_day": logins_by_day,
         "failed_logins_by_day": failed_logins_by_day,
+        "failed_login_anomaly_days": failed_login_anomalies,
         "most_used_features": top(feature_counts, 10),
         "most_visited_views": top(view_counts, 12),
         "leaving_from": top(leaving_counts, 10),
         "recent_signups": [
-            {"name": n, "email": em, "created_at": ca.isoformat() if ca else None, "country": c}
-            for n, em, ca, c in recent_signups
+            {"id": uid, "name": n, "email": em, "created_at": ca.isoformat() if ca else None, "country": c}
+            for uid, n, em, ca, c in recent_signups
         ],
     })
+
+
+@app.route("/api/admin/user/<int:user_id>")
+@admin_required
+def api_admin_user_detail(user_id):
+    """Per-user drill-down: profile basics, activity counts, and recent
+    events, for clicking into a row in the admin signups table."""
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "No user with that ID."}), 404
+
+    stats = get_or_create_stats(user_id)
+    wishlist_count = WishlistItem.query.filter_by(user_id=user_id).count()
+    history_count = HistoryItem.query.filter_by(user_id=user_id).count()
+    login_events = LoginEvent.query.filter_by(user_id=user_id).order_by(LoginEvent.ts.desc()).limit(20).all()
+    feature_events = FeatureEvent.query.filter_by(user_id=user_id).order_by(FeatureEvent.ts.desc()).limit(20).all()
+    last_login = next((l.ts for l in login_events if l.success), None)
+
+    return jsonify({
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "country": user.country,
+        "currency": user.currency,
+        "is_verified": user.is_verified,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login": last_login.isoformat() if last_login else None,
+        "currently_locked_out": bool(user.lockout_until and user.lockout_until > datetime.utcnow()),
+        "failed_login_attempts": user.failed_login_attempts or 0,
+        "searches": stats.searches or 0,
+        "accepted_recommendations": stats.accepted or 0,
+        "saved_amount": stats.saved or 0,
+        "top_categories": sorted((stats.categories or {}).items(), key=lambda kv: kv[1], reverse=True)[:5],
+        "wishlist_count": wishlist_count,
+        "history_count": history_count,
+        "recent_logins": [{"ts": l.ts.isoformat() if l.ts else None, "success": l.success, "ip": l.ip} for l in login_events],
+        "recent_features": [{"ts": e.ts.isoformat() if e.ts else None, "feature": e.feature} for e in feature_events],
+    })
+
+
+@app.route("/api/admin/export")
+@admin_required
+def api_admin_export():
+    """CSV export for offline analysis. ?type=signups|logins|features, and
+    an optional ?days= for the logins/features exports (signups always
+    exports everyone, since a signup list isn't a rolling window)."""
+    export_type = (request.args.get("type") or "signups").strip()
+    days = min(max(int(request.args.get("days", 30) or 30), 1), 365)
+    since = datetime.utcnow() - timedelta(days=days)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+
+    if export_type == "signups":
+        writer.writerow(["id", "full_name", "email", "country", "currency", "is_verified", "created_at"])
+        for u in User.query.order_by(User.created_at.desc()).all():
+            writer.writerow([u.id, u.full_name, u.email, u.country, u.currency, u.is_verified,
+                              u.created_at.isoformat() if u.created_at else ""])
+    elif export_type == "logins":
+        writer.writerow(["id", "user_id", "email", "success", "ip", "ts"])
+        for l in LoginEvent.query.filter(LoginEvent.ts >= since).order_by(LoginEvent.ts.desc()).all():
+            writer.writerow([l.id, l.user_id, l.email, l.success, l.ip, l.ts.isoformat() if l.ts else ""])
+    elif export_type == "features":
+        writer.writerow(["id", "user_id", "feature", "ts"])
+        for e in FeatureEvent.query.filter(FeatureEvent.ts >= since).order_by(FeatureEvent.ts.desc()).all():
+            writer.writerow([e.id, e.user_id, e.feature, e.ts.isoformat() if e.ts else ""])
+    else:
+        return jsonify({"error": "Unknown export type. Use signups, logins, or features."}), 400
+
+    filename = f"prism_{export_type}_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/uploads/pic/<path:filename>")
@@ -1287,12 +1504,10 @@ def api_profile_update():
 
     uploaded_file = request.files.get("profile_picture")
     if uploaded_file and uploaded_file.filename:
-        filename = secure_filename(uploaded_file.filename)
-        if filename:
-            unique_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{filename}"
-            upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
-            uploaded_file.save(upload_path)
-            user.profile_picture = os.path.join("pic", unique_name).replace("\\", "/")
+        saved_path, upload_error = save_uploaded_profile_picture(uploaded_file)
+        if upload_error:
+            return jsonify({"error": upload_error}), 400
+        user.profile_picture = saved_path
 
     db.session.commit()
 
@@ -1971,17 +2186,9 @@ def api_ai_vision():
     if not uploaded or not uploaded.filename:
         return jsonify({"error": "Attach an image to scan."}), 400
 
-    mime_type = uploaded.mimetype or "image/jpeg"
-    if not mime_type.startswith("image/"):
-        return jsonify({"error": "That file doesn't look like an image — attach a photo (JPG, PNG, WEBP) to scan."}), 400
-
-    image_bytes = uploaded.read()
-    if not image_bytes:
-        return jsonify({"error": "That image came through empty — try again."}), 400
-    if len(image_bytes) < 200:
-        # A handful of bytes almost certainly isn't a real photo; avoid
-        # sending garbage to the model and getting a confidently wrong guess.
-        return jsonify({"error": "That image looks corrupted or too small to scan — try another photo."}), 400
+    ok, error, image_bytes, mime_type = validate_image_upload(uploaded, MAX_SCAN_IMAGE_BYTES)
+    if not ok:
+        return jsonify({"error": error}), 400
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
 

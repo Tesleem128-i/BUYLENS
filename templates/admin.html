@@ -25,11 +25,18 @@
       <button data-days="30">30d</button>
       <button data-days="90">90d</button>
     </div>
+    <div class="admin-export" id="admin-export">
+      <button data-type="signups">Export signups</button>
+      <button data-type="logins">Export logins</button>
+      <button data-type="features">Export features</button>
+    </div>
     <a href="{{ url_for('dashboard') }}" class="admin-exit">&larr; Back to Prism</a>
   </div>
 </header>
 
 <main class="admin-main">
+
+  <div class="admin-banner admin-banner--warn" id="admin-anomaly-banner" hidden></div>
 
   <section class="admin-kpis" id="admin-kpis">
     <div class="admin-kpi"><span class="admin-kpi__label">Total users</span><span class="admin-kpi__value" id="kpi-total-users">—</span></div>
@@ -71,6 +78,7 @@
 
   <section class="admin-card">
     <h2>Recent signups</h2>
+    <p class="admin-card__sub">Click a row for that user's activity.</p>
     <table class="admin-table" id="admin-signups-table">
       <thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Joined</th></tr></thead>
       <tbody><tr><td colspan="4" class="admin-empty">Loading…</td></tr></tbody>
@@ -78,6 +86,14 @@
   </section>
 
 </main>
+
+<div class="admin-modal" id="admin-user-modal" hidden>
+  <div class="admin-modal__backdrop"></div>
+  <div class="admin-modal__panel">
+    <button type="button" class="admin-modal__close" id="admin-modal-close" aria-label="Close">✕</button>
+    <div id="admin-modal-body"><p class="admin-empty">Loading…</p></div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
