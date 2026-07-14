@@ -36,12 +36,14 @@
   {% endwith %}
 
   <form class="auth-verify" method="POST" action="{{ url_for('verify_email') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="email" name="email" value="{{ email }}" required hidden>
     <input type="text" name="code" placeholder="000000" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" required autofocus>
     <button type="submit">Verify code</button>
   </form>
 
   <form class="auth-resend" method="POST" action="{{ url_for('resend_verification') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="email" name="email" value="{{ email }}" required hidden>
     <button type="submit">Resend code</button>
   </form>

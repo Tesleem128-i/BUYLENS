@@ -85,8 +85,11 @@
     if (!res.ok) throw new Error(data.error || "Request failed.");
     return data;
   }
+  function csrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || "";
+  }
   async function deleteJSON(url) {
-    const res = await fetch(url, { method: "DELETE" });
+    const res = await fetch(url, { method: "DELETE", headers: { "X-CSRFToken": csrfToken() } });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "Request failed.");
     return data;
@@ -203,9 +206,31 @@
     state.stats.categories[name] = (state.stats.categories[name] || 0) + 1;
     cacheSnapshot();
     postJSON("/api/stats/category", { name })
-      .then((stats) => { state.stats = stats; cacheSnapshot(); renderStats(); })
+      .then((stats) => { state.stats = stats; cacheSnapshot(); renderStats(); refreshTrending(); })
       .catch(() => {});
   }
+
+  /** Fire-and-forget usage ping for the admin analytics panel — coarse
+   *  feature names only (e.g. "view:search", "tool:buy-or-wait"), never
+   *  message content. Failures are silently ignored; this must never block
+   *  or interrupt what the shopper is actually doing. */
+  function trackFeature(name) {
+    if (!name) return;
+    postJSON("/api/track", { feature: name }).catch(() => {});
+  }
+  // Reliable delivery for the very last event of a session — a normal fetch()
+  // can get cancelled mid-flight once the browser starts navigating to
+  // /logout, so this uses sendBeacon instead, which is built for exactly
+  // this "about to leave the page" case.
+  function trackFeatureOnLeave(name) {
+    try {
+      const blob = new Blob([JSON.stringify({ feature: name })], { type: "application/json" });
+      navigator.sendBeacon("/api/track", blob);
+    } catch { /* non-critical */ }
+  }
+  $("#logout-link")?.addEventListener("click", () => {
+    trackFeatureOnLeave("leaving:" + (typeof currentView !== "undefined" ? currentView : "unknown"));
+  });
 
   function maybeAward(name) {
     if (!state.achievements.includes(name)) {
@@ -236,6 +261,7 @@
     railItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
     mobileTabItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
     views.forEach((v) => v.classList.toggle("is-active", v.id === "view-" + name));
+    trackFeature("view:" + name);
     if (name === "analytics") requestAnimationFrame(renderCharts);
     if (name === "copilot") renderMemoryCard();
     if (window.innerWidth <= 900) collapseRail(true);
@@ -298,7 +324,7 @@
   async function postJSON(url, body) {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
       body: JSON.stringify(body || {}),
     });
     const data = await res.json().catch(() => ({}));
@@ -571,8 +597,10 @@
   }
 
   function renderMarkdown(text) {
-    try { return window.marked ? window.marked.parse(text) : escapeHtml(text); }
-    catch { return escapeHtml(text); }
+    try {
+      const raw = window.marked ? window.marked.parse(text) : escapeHtml(text);
+      return window.DOMPurify ? window.DOMPurify.sanitize(raw) : raw;
+    } catch { return escapeHtml(text); }
   }
 
   async function sendChat(message, imageAttachment) {
@@ -583,6 +611,8 @@
     state.chatHistory.push({ role: "user", text: message || "[Sent a photo]" });
     logHistory("chat", message || "Sent a photo to Prism");
     bumpStat("searches");
+    if (message) bumpCategory(guessCategory(message));
+    trackFeature("chat");
 
     const bubble = addBubble("model", '<span class="chat__cursor"></span>');
     chatSendBtn.disabled = true;
@@ -596,7 +626,7 @@
     try {
       const res = await fetch("/api/ai/chat/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
         body: JSON.stringify({
           message,
           history: state.chatHistory.slice(0, -1),
@@ -668,6 +698,7 @@
     if (!query) return;
     logHistory("search", query);
     bumpStat("searches");
+    trackFeature("search");
     searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">Prism is analyzing "${escapeHtml(query)}"…</p></div>`;
     if (!PRISM_ON) {
       searchResults.innerHTML = `<div class="glass result-card"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY on the server.</p></div>`;
@@ -846,12 +877,13 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000); // never hang forever
     try {
-      const res = await fetch("/api/ai/vision", { method: "POST", body: fd, signal: controller.signal });
+      const res = await fetch("/api/ai/vision", { method: "POST", body: fd, headers: { "X-CSRFToken": csrfToken() }, signal: controller.signal });
       const data = await res.json().catch(() => { throw new Error("Prism sent back something unreadable — try again."); });
       if (!res.ok) throw new Error(data.error || "Scan failed.");
       renderVisionResult(data);
       logHistory("scan", data.product_name || "Scanned product");
       bumpCategory(data.category);
+      trackFeature("scan");
       maybeAward("First AI scan");
     } catch (err) {
       const msg = err.name === "AbortError" ? "Scan timed out — check your connection and try again." : err.message;
@@ -944,6 +976,7 @@
     out.innerHTML = `<div class="glass panel"><p class="empty-note">Prism is ranking options…</p></div>`;
     logHistory("recommend", need);
     bumpCategory(guessCategory(need));
+    trackFeature("recommend");
     if (!PRISM_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY.</p></div>`; return; }
     try {
       const data = await postJSON("/api/ai/recommend", { need, budget });
@@ -981,6 +1014,7 @@
     if (!btn) return;
     addToWishlist(btn.dataset.name, btn.dataset.price);
     bumpStat("accepted");
+    trackFeature("recommend:accepted");
     toast("Added to wishlist and counted as an accepted recommendation.");
   });
 
@@ -1270,7 +1304,7 @@
     const fd = new FormData();
     fd.append(field, value);
     try {
-      const res = await fetch("/api/profile/update", { method: "POST", body: fd });
+      const res = await fetch("/api/profile/update", { method: "POST", body: fd, headers: { "X-CSRFToken": csrfToken() } });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Couldn't save that setting.");
       if (data.currency) userData.currency = data.currency;
@@ -1332,7 +1366,7 @@
     if (pendingProfilePicFile) fd.append("profile_picture", pendingProfilePicFile);
 
     try {
-      const res = await fetch("/api/profile/update", { method: "POST", body: fd });
+      const res = await fetch("/api/profile/update", { method: "POST", body: fd, headers: { "X-CSRFToken": csrfToken() } });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Couldn't save your changes.");
 
@@ -1711,8 +1745,10 @@
         try {
           const data = await postJSON(tool.endpoint, payload);
           resultEl.innerHTML = tool.render(data);
-          logHistory("tool:" + toolId, tool.title + (payload.product || payload.need || payload.goal || payload.situation ? " — " + (payload.product || payload.need || payload.goal || payload.situation) : ""));
-          bumpCategory(tool.title);
+          const toolSubject = payload.product || payload.need || payload.goal || payload.situation || "";
+          logHistory("tool:" + toolId, tool.title + (toolSubject ? " — " + toolSubject : ""));
+          bumpCategory(guessCategory(toolSubject));
+          trackFeature("tool:" + toolId);
           maybeAward("First Copilot tool used");
         } catch (err) {
           resultEl.innerHTML = `<p class="empty-note">⚠️ ${escapeHtml(err.message)}</p>`;

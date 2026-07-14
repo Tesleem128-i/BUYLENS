@@ -13,6 +13,10 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, Response, stream_with_context, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
+from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError, generate_csrf
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import random
@@ -39,6 +43,49 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 
 db = SQLAlchemy(app)
+
+# --- Security: CSRF protection on every state-changing request --------------
+# Covers both classic HTML <form> posts (login/signup/settings) and the
+# dashboard's JSON fetch() calls (dashboard.js sends the token back via the
+# X-CSRFToken header, read from the <meta name="csrf-token"> tag).
+app.config["WTF_CSRF_TIME_LIMIT"] = None  # tokens last the whole session, not just 1h
+csrf = CSRFProtect(app)
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    # A generic, non-technical message — don't leak *why* validation failed.
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Your session has expired or this request looks invalid. Please refresh the page and try again."}), 400
+    flash("Your session expired — please try that again.", "error")
+    return redirect(request.referrer or url_for("index"))
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": generate_csrf}
+
+
+# --- Security: rate limiting -------------------------------------------------
+# Keyed by IP address. Generous global default so normal use is never
+# affected; individual sensitive routes (login, signup, password reset, AI
+# endpoints) apply their own tighter limits below via @limiter.limit(...).
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["600 per hour", "60 per minute"],
+    storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"),
+)
+
+# --- Admin access -------------------------------------------------------------
+# Only this account sees the admin analytics panel. Checked by email, not a
+# toggleable DB flag, so it can't accidentally be granted to anyone else.
+ADMIN_EMAILS = {"muhammedtesleemolatundun@gmail.com"}
+
+
+def is_admin_email(email):
+    return (email or "").strip().lower() in ADMIN_EMAILS
+
 
 # --- Brevo (Sendinblue) transactional email ---------------------------------
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY")
@@ -262,13 +309,23 @@ _BRAND_KEYWORDS = [
 
 def build_memory_profile(user_id):
     """Heuristic (no AI call) 'AI Shopping Memory' profile: scans this
-    account's stored wishlist/history/stats to surface plain-language
-    preferences — top category, typical budget ceiling, favored brands."""
+    account's stored wishlist/history/stats, PLUS whatever the shopper has
+    directly declared in Settings, to surface plain-language preferences —
+    top category, typical budget ceiling, favored brands. Declared interests
+    are included unconditionally (not just once activity exists), so a brand
+    new account that's only filled in "Shopping Interests" still gets
+    personalized answers from message one."""
+    user = User.query.get(user_id)
     wishlist = WishlistItem.query.filter_by(user_id=user_id).all()
     history = HistoryItem.query.filter_by(user_id=user_id).order_by(HistoryItem.ts.desc()).limit(60).all()
     stats = get_or_create_stats(user_id)
+    currency = user.currency if user else DEFAULT_CURRENCY
+    symbol = _CURRENCY_SYMBOLS.get(normalize_currency(currency), "")
 
     notes = []
+    if user and user.interests:
+        notes.append(f"Has declared these shopping interests in Settings: {user.interests.strip()}")
+
     top_cats = sorted((stats.categories or {}).items(), key=lambda kv: kv[1], reverse=True)
     if top_cats:
         notes.append(f"Shops most often in: {top_cats[0][0]}" + (f" and {top_cats[1][0]}" if len(top_cats) > 1 else ""))
@@ -276,7 +333,7 @@ def build_memory_profile(user_id):
     amounts = [a for a in (_parse_amount(w.price) for w in wishlist) if a]
     if amounts:
         ceiling = max(amounts)
-        notes.append(f"Typical budget ceiling seen on their wishlist: ~₦{ceiling:,.0f}")
+        notes.append(f"Typical budget ceiling seen on their wishlist: ~{symbol}{ceiling:,.0f}")
 
     corpus = " ".join([w.name for w in wishlist] + [h.text for h in history]).lower()
     brand_hits = [(b, corpus.count(b.lower())) for b in _BRAND_KEYWORDS]
@@ -463,6 +520,8 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     country = db.Column(db.String(80), nullable=False, default=DEFAULT_COUNTRY, server_default=DEFAULT_COUNTRY)
     currency = db.Column(db.String(8), nullable=False, default=DEFAULT_CURRENCY, server_default=DEFAULT_CURRENCY)
+    failed_login_attempts = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    lockout_until = db.Column(db.DateTime, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +593,30 @@ class UserStats(db.Model):
     def categories(self, value):
         self.categories_json = json.dumps(value or {})
 
+
+class LoginEvent(db.Model):
+    """One row per login attempt (success or failure) — powers 'logins per
+    day' and active-user counts in the admin panel, and is what the
+    brute-force lockout logic checks against."""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    success = db.Column(db.Boolean, nullable=False, default=False)
+    ip = db.Column(db.String(64), nullable=True)
+    ts = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+
+class FeatureEvent(db.Model):
+    """One row per meaningful in-app action (switching to a dashboard view,
+    running a Copilot tool, etc.) — powers 'most used feature' and 'where
+    people are before they leave' in the admin panel. Deliberately coarse
+    (a view/tool name, not full click tracking) — enough to see usage
+    patterns without turning this into a surveillance log."""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    feature = db.Column(db.String(120), nullable=False, index=True)
+    ts = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
     def to_dict(self):
         return {"saved": self.saved or 0, "searches": self.searches or 0,
                 "accepted": self.accepted or 0, "categories": self.categories}
@@ -585,9 +668,13 @@ with app.app_context():
                 _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN country VARCHAR(80) DEFAULT '{DEFAULT_COUNTRY}'"))
             if "currency" not in _cols:
                 _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN currency VARCHAR(8) DEFAULT '{DEFAULT_CURRENCY}'"))
+            if "failed_login_attempts" not in _cols:
+                _conn.execute(_sqltext("ALTER TABLE \"user\" ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"))
+            if "lockout_until" not in _cols:
+                _conn.execute(_sqltext("ALTER TABLE \"user\" ADD COLUMN lockout_until TIMESTAMP"))
             _conn.commit()
     except Exception as _mig_exc:
-        app.logger.warning(f"Skipped country/currency column migration check: {_mig_exc}")
+        app.logger.warning(f"Skipped column migration check: {_mig_exc}")
 
     # Add demo account if it doesn't exist
     demo_email = "demo@gmail.com"
@@ -620,6 +707,26 @@ def login_required(view):
             session.clear()
             flash("Your session has expired. Please log in again.", "error")
             return redirect(url_for("login"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            flash("Please log in to continue.", "error")
+            return redirect(url_for("login"))
+        user = User.query.get(session["user_id"])
+        if not user:
+            session.clear()
+            return redirect(url_for("login"))
+        if not is_admin_email(user.email):
+            # Deliberately vague — don't confirm/deny that an admin panel
+            # exists to non-admin accounts poking at the URL.
+            flash("That page doesn't exist.", "error")
+            return redirect(url_for("dashboard"))
         return view(*args, **kwargs)
 
     return wrapped
@@ -799,7 +906,21 @@ def index():
     return render_template("index.html")
 
 
+LEGAL_LAST_UPDATED = "July 14, 2026"
+
+
+@app.route("/terms")
+def terms():
+    return render_template("terms.html", legal_updated=LEGAL_LAST_UPDATED)
+
+
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html", legal_updated=LEGAL_LAST_UPDATED)
+
+
 @app.route("/signup", methods=["GET", "POST"])
+@limiter.limit("10 per hour")
 def signup():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
@@ -807,6 +928,7 @@ def signup():
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
         interests = request.form.get("interest", "").strip()
+        agreed_terms = request.form.get("agree_terms") == "on"
 
         error = None
         if not full_name or not email or not password:
@@ -815,6 +937,8 @@ def signup():
             error = "Passwords don't match."
         elif len(password) < 8:
             error = "Use at least 8 characters for your password."
+        elif not agreed_terms:
+            error = "You must agree to the Terms of Service and Privacy Policy to create an account."
         elif User.query.filter_by(email=email).first():
             error = "An account with this email already exists."
 
@@ -855,6 +979,7 @@ def verify_sent():
 
 
 @app.route("/verify-email", methods=["GET", "POST"])
+@limiter.limit("15 per hour")
 def verify_email():
     email = request.args.get("email", "") or request.form.get("email", "")
     email = email.strip().lower()
@@ -894,6 +1019,7 @@ def verify_email():
 
 
 @app.route("/resend-verification", methods=["POST"])
+@limiter.limit("6 per hour")
 def resend_verification():
     email = request.form.get("email", "").strip().lower()
     user = User.query.filter_by(email=email).first()
@@ -905,20 +1031,46 @@ def resend_verification():
     return redirect(url_for("verify_email", email=email))
 
 
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
+
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("15 per minute")
 def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         user = User.query.filter_by(email=email).first()
+        client_ip = get_remote_address()
+
+        if user and user.lockout_until and user.lockout_until > datetime.utcnow():
+            wait_mins = max(1, int((user.lockout_until - datetime.utcnow()).total_seconds() // 60) + 1)
+            flash(f"Too many failed attempts. Try again in about {wait_mins} minute(s), or reset your password.", "error")
+            db.session.add(LoginEvent(user_id=user.id, email=email, success=False, ip=client_ip))
+            db.session.commit()
+            return render_template("login.html", email=email)
 
         if not user or not check_password_hash(user.password_hash, password):
+            db.session.add(LoginEvent(user_id=user.id if user else None, email=email, success=False, ip=client_ip))
+            if user:
+                user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+                if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
+                    user.lockout_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
+            db.session.commit()
+            # Same message whether the email doesn't exist or the password is
+            # wrong, so this can't be used to enumerate registered accounts.
             flash("Incorrect email or password.", "error")
             return render_template("login.html", email=email)
 
         if not user.is_verified:
             flash("Verify your email before logging in.", "error")
             return redirect(url_for("verify_sent", email=email))
+
+        user.failed_login_attempts = 0
+        user.lockout_until = None
+        db.session.add(LoginEvent(user_id=user.id, email=email, success=True, ip=client_ip))
+        db.session.commit()
 
         session["user_id"] = user.id
         session["user_name"] = user.full_name
@@ -928,6 +1080,7 @@ def login():
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("6 per hour")
 def forgot_password():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
@@ -949,6 +1102,7 @@ def forgot_password():
 
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
+@limiter.limit("10 per hour")
 def reset_password(token):
     user = User.query.filter_by(reset_token=token).first()
     token_valid = bool(
@@ -988,6 +1142,89 @@ def reset_password(token):
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+
+@app.route("/admin")
+@admin_required
+def admin_panel():
+    return render_template("admin.html")
+
+
+def _bucket_by_day(timestamps, days=14):
+    """{'YYYY-MM-DD': count} for the last `days` days, oldest first, zero-
+    filled so the chart doesn't skip days with no activity."""
+    today = datetime.utcnow().date()
+    buckets = {(today - timedelta(days=i)).isoformat(): 0 for i in range(days - 1, -1, -1)}
+    for ts in timestamps:
+        if not ts:
+            continue
+        key = ts.date().isoformat()
+        if key in buckets:
+            buckets[key] += 1
+    return buckets
+
+
+@app.route("/api/admin/analytics")
+@admin_required
+def api_admin_analytics():
+    days = min(max(int(request.args.get("days", 14) or 14), 1), 90)
+    since = datetime.utcnow() - timedelta(days=days)
+
+    total_users = User.query.count()
+    verified_users = User.query.filter_by(is_verified=True).count()
+
+    signups = User.query.filter(User.created_at >= since).with_entities(User.created_at).all()
+    signups_by_day = _bucket_by_day([s[0] for s in signups], days)
+
+    logins = LoginEvent.query.filter(LoginEvent.ts >= since).all()
+    logins_by_day = _bucket_by_day([l.ts for l in logins if l.success], days)
+    failed_logins_by_day = _bucket_by_day([l.ts for l in logins if not l.success], days)
+    total_logins = sum(1 for l in logins if l.success)
+    total_failed_logins = sum(1 for l in logins if not l.success)
+    currently_locked_out = User.query.filter(User.lockout_until != None, User.lockout_until > datetime.utcnow()).count()  # noqa: E711
+
+    events = FeatureEvent.query.filter(FeatureEvent.ts >= since).all()
+    feature_counts, view_counts, leaving_counts = {}, {}, {}
+    active_user_ids = set()
+    for e in events:
+        active_user_ids.add(e.user_id)
+        if e.feature.startswith("view:"):
+            key = e.feature[len("view:"):]
+            view_counts[key] = view_counts.get(key, 0) + 1
+        elif e.feature.startswith("leaving:"):
+            key = e.feature[len("leaving:"):]
+            leaving_counts[key] = leaving_counts.get(key, 0) + 1
+        else:
+            feature_counts[e.feature] = feature_counts.get(e.feature, 0) + 1
+    active_user_ids |= {l.user_id for l in logins if l.success and l.user_id}
+
+    def top(d, n=10):
+        return [{"name": k, "count": v} for k, v in sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:n]]
+
+    recent_signups = (
+        User.query.order_by(User.created_at.desc()).limit(10)
+        .with_entities(User.full_name, User.email, User.created_at, User.country).all()
+    )
+
+    return jsonify({
+        "range_days": days,
+        "total_users": total_users,
+        "verified_users": verified_users,
+        "active_users_in_range": len(active_user_ids),
+        "total_logins_in_range": total_logins,
+        "total_failed_logins_in_range": total_failed_logins,
+        "currently_locked_out": currently_locked_out,
+        "signups_by_day": signups_by_day,
+        "logins_by_day": logins_by_day,
+        "failed_logins_by_day": failed_logins_by_day,
+        "most_used_features": top(feature_counts, 10),
+        "most_visited_views": top(view_counts, 12),
+        "leaving_from": top(leaving_counts, 10),
+        "recent_signups": [
+            {"name": n, "email": em, "created_at": ca.isoformat() if ca else None, "country": c}
+            for n, em, ca, c in recent_signups
+        ],
+    })
 
 
 @app.route("/uploads/pic/<path:filename>")
@@ -1210,6 +1447,26 @@ def api_stats_category():
     stats.categories = cats
     db.session.commit()
     return jsonify(stats.to_dict())
+
+
+@app.route("/api/track", methods=["POST"])
+@csrf.exempt  # low-risk, append-only analytics ping — also sent via
+              # navigator.sendBeacon() on logout, which can't attach a CSRF header
+@limiter.limit("120 per minute")
+def api_track_feature():
+    """Log a single coarse feature-usage event (e.g. 'view:search',
+    'tool:buy-or-wait', 'leaving:assistant') for the admin analytics panel.
+    Requires a logged-in session, but never blocks or errors loudly — this
+    must stay invisible to the person actually using the app."""
+    uid = session.get("user_id")
+    if not uid:
+        return jsonify({"ok": False}), 200
+    body = request.get_json(force=True, silent=True) or {}
+    feature = (body.get("feature") or "").strip()[:120]
+    if feature:
+        db.session.add(FeatureEvent(user_id=uid, feature=feature))
+        db.session.commit()
+    return jsonify({"ok": True})
 
 
 # --- Real trending signal: Google Trends, no API key required ---------------
@@ -1455,6 +1712,7 @@ def _lens_error_response(exc):
 
 
 @app.route("/api/ai/chat/stream", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_chat_stream():
     """Streaming AI Shopping Assistant — Server-Sent Events. Accepts an
@@ -1513,6 +1771,7 @@ def api_fx_usd_ngn():
 
 
 @app.route("/api/ai/search", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_search():
     """Natural-language product search -> structured verdict + candidate picks."""
@@ -1549,6 +1808,7 @@ Every price_estimate MUST be in {currency} ({symbol}) — do not use any other c
 
 
 @app.route("/api/ai/recommend", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_recommend():
     """Budget/need based recommendation engine."""
@@ -1588,6 +1848,7 @@ Every "price" MUST be in {currency} — do not use any other currency."""
 
 
 @app.route("/api/ai/compare", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_compare():
     body = request.get_json(force=True, silent=True) or {}
@@ -1625,6 +1886,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/reviews", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_reviews():
     body = request.get_json(force=True, silent=True) or {}
@@ -1656,6 +1918,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/scam-check", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_scam_check():
     body = request.get_json(force=True, silent=True) or {}
@@ -1693,6 +1956,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/vision", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_vision():
     """AI Camera / barcode scanner — Prism Vision analysis of an uploaded image."""
@@ -1776,6 +2040,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/price-history", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_price_history():
     body = request.get_json(force=True, silent=True) or {}
@@ -1815,6 +2080,7 @@ def api_memory_profile():
 
 
 @app.route("/api/ai/negotiate", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_negotiate():
     """AI Negotiator — reads a listing's asking price, estimates fair market
@@ -1851,6 +2117,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/fake-listing", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_fake_listing():
     """Fake Listing / Authenticity Detector — heuristic read of a pasted
@@ -1890,6 +2157,7 @@ findings you have no basis for; only flag what the text itself supports."""
 
 
 @app.route("/api/ai/shopping-agent", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_shopping_agent():
     """AI Shopping Agent — simulates checking multiple marketplaces and
@@ -1933,6 +2201,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/budget-planner", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_budget_planner():
     """AI Budget Planner — splits a lump budget across a shopping goal's
@@ -1973,6 +2242,7 @@ Keep the item list to 4-7 realistic items for this goal."""
 
 
 @app.route("/api/ai/buy-or-wait", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_buy_or_wait():
     """Buy or Wait Predictor — current price vs. fair market value, a
@@ -2013,6 +2283,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/scam-messages", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_scam_messages():
     """Scam Message Detector — reads pasted chat/WhatsApp messages from a
@@ -2044,6 +2315,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/lifespan", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_lifespan():
     """Product Life Expectancy — typical lifespan, repairability, and
@@ -2076,6 +2348,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/deal-hunter", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_deal_hunter():
     """AI Deal Hunter — a small daily digest of plausible deals, tailored
@@ -2111,6 +2384,7 @@ Exactly 3 deals."""
 
 
 @app.route("/api/ai/resale-predictor", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_resale_predictor():
     """AI Resale Predictor — projects a product's value at 1/2/3 years out
@@ -2147,6 +2421,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/compatibility", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_compatibility():
     """AI Compatibility Checker — checks a part against a freeform
@@ -2187,6 +2462,7 @@ mark status "unknown" rather than guessing if info is missing."""
 
 
 @app.route("/api/ai/timeline", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_timeline():
     """AI Product Timeline — a short release-to-now history for a product,
@@ -2223,6 +2499,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/community", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_community():
     """AI Buyer Community — a plausible aggregate-owner-sentiment snapshot
@@ -2257,6 +2534,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/score", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_score():
     """AI Shopping Score — a multi-axis scorecard (value/performance/
@@ -2290,6 +2568,7 @@ Return ONLY JSON, no markdown fences:
 
 
 @app.route("/api/ai/copilot", methods=["POST"])
+@limiter.limit("20 per minute")
 @login_required
 def api_ai_copilot():
     """AI Shopping Copilot — turns a life situation ("moving into my first

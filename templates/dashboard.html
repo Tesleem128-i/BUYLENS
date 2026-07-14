@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Prism — Dashboard</title>
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -89,9 +90,14 @@
       <button class="rail__item" data-view="profile">
         <span class="rail__icon">◉</span><span class="rail__label">Profile</span>
       </button>
+      {% if user.email and user.email|lower == "muhammedtesleemolatundun@gmail.com" %}
+      <a class="rail__item" href="{{ url_for('admin_panel') }}">
+        <span class="rail__icon">🛡</span><span class="rail__label">Admin</span>
+      </a>
+      {% endif %}
     </nav>
 
-    <a class="rail__exit" href="{{ url_for('logout') }}">
+    <a class="rail__exit" href="{{ url_for('logout') }}" id="logout-link">
       <span class="rail__icon">⏻</span><span class="rail__label">Log Out</span>
     </a>
   </aside>
@@ -519,20 +525,6 @@
             <div><b>Voice shopping</b><span>Allow microphone for voice search.</span></div>
             <label class="toggle"><input type="checkbox" id="toggle-voice" checked><span></span></label>
           </div>
-          <div class="settings-row">
-            <div><b>Language</b><span>Interface language.</span></div>
-            <select id="lang-select">
-              <option>English</option>
-              <option>Français</option>
-              <option>Hausa</option>
-              <option>Yorùbá</option>
-              <option>Igbo</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <div><b>Two-factor authentication</b><span>Add an extra layer of security.</span></div>
-            <label class="toggle"><input type="checkbox" id="toggle-2fa"><span></span></label>
-          </div>
           <div class="settings-row settings-row--danger">
             <div><b>Delete account</b><span>Permanently remove your Prism account and data.</span></div>
             <button class="danger-btn" id="delete-account-btn">Delete</button>
@@ -571,6 +563,7 @@
 
 <div class="toast-stack" id="toast-stack"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

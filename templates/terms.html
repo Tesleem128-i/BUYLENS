@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms of Service — Prism</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body legal-body">
+
+<div class="auth-glow"></div>
+<a href="javascript:history.back()" class="auth-back">&larr; Back</a>
+
+<div class="legal-card">
+  <div class="legal-updated">Last updated: {{ legal_updated or "July 14, 2026" }}</div>
+  <h1>Terms of Service</h1>
+  <p>These Terms of Service ("Terms") govern your access to and use of Prism (the "Service"), operated from Nigeria. By creating an account or using Prism, you agree to these Terms. If you don't agree, please don't use the Service.</p>
+
+  <div class="legal-toc">
+    <div>On this page</div>
+    <ol>
+      <li><a href="#eligibility">1. Eligibility &amp; accounts</a></li>
+      <li><a href="#acceptable-use">2. Acceptable use</a></li>
+      <li><a href="#ai-content">3. AI-generated content</a></li>
+      <li><a href="#third-party">4. Third-party links &amp; marketplaces</a></li>
+      <li><a href="#pricing">5. Pricing, currency &amp; FX rates</a></li>
+      <li><a href="#ip">6. Intellectual property</a></li>
+      <li><a href="#termination">7. Suspension &amp; termination</a></li>
+      <li><a href="#disclaimer">8. Disclaimers &amp; limitation of liability</a></li>
+      <li><a href="#law">9. Governing law</a></li>
+      <li><a href="#changes">10. Changes to these Terms</a></li>
+      <li><a href="#contact">11. Contact</a></li>
+    </ol>
+  </div>
+
+  <h2 id="eligibility">1. Eligibility &amp; accounts</h2>
+  <p>You must be at least 16 years old to use Prism. You're responsible for keeping your login credentials confidential and for all activity under your account. Tell us right away if you suspect unauthorized access — you can reach us using the contact details below.</p>
+
+  <h2 id="acceptable-use">2. Acceptable use</h2>
+  <p>You agree not to:</p>
+  <ul>
+    <li>Use Prism for any unlawful purpose, or to violate any applicable law or regulation.</li>
+    <li>Attempt to gain unauthorized access to the Service, other accounts, or the systems behind it, including by probing, scanning, or testing for vulnerabilities without authorization.</li>
+    <li>Interfere with or disrupt the Service — including circumventing rate limits, scraping at scale, or overwhelming it with automated requests.</li>
+    <li>Upload malicious files, or use the image-scanning feature to submit content that is illegal, abusive, or infringes someone else's rights.</li>
+    <li>Misrepresent your identity or impersonate another person or entity.</li>
+  </ul>
+  <p>We may suspend or terminate accounts that violate this section.</p>
+
+  <h2 id="ai-content">3. AI-generated content</h2>
+  <p>Prism uses AI models to generate product identifications, price estimates, recommendations, comparisons, and other buying guidance. <strong>This content is generated, not scraped from live listings</strong> — treat every price, spec, and availability claim as an estimate, not a guarantee. Always verify the actual price, condition, and stock directly with the seller or marketplace before making a purchase decision. Prism is a decision-support tool, not a source of truth, and is not a substitute for your own judgment or professional financial advice.</p>
+
+  <h2 id="third-party">4. Third-party links &amp; marketplaces</h2>
+  <p>Prism attaches links to third-party marketplaces (such as Jumia, Konga, Amazon, and others) so you can verify and purchase items. We don't control these third parties, aren't responsible for their content, pricing, or conduct, and any purchase you make through them is a transaction between you and that third party — governed by their own terms and policies.</p>
+
+  <h2 id="pricing">5. Pricing, currency &amp; FX rates</h2>
+  <p>Your account has a fixed currency, set in Settings, that Prism uses for all price estimates and conversions. Foreign-exchange rates are fetched periodically from a third-party rate provider and cached for a period of time — they are a reasonable approximation for planning purposes, not a live, transaction-grade rate, and can drift from the real market rate. Confirm the actual rate with your bank or payment provider before relying on it for a real transaction.</p>
+
+  <h2 id="ip">6. Intellectual property</h2>
+  <p>Prism's branding, interface, and underlying software are owned by us or our licensors and protected by applicable intellectual property laws. You may not copy, modify, reverse-engineer, or redistribute the Service except as permitted by these Terms or applicable law. You retain ownership of content you submit (such as photos you scan or interests you enter), and grant us a limited license to process it in order to provide the Service to you.</p>
+
+  <h2 id="termination">7. Suspension &amp; termination</h2>
+  <p>You may stop using Prism and delete your account at any time from Settings. We may suspend or terminate your access if you violate these Terms, misuse the Service, or where required by law. Where reasonably possible, we'll try to notify you first.</p>
+
+  <h2 id="disclaimer">8. Disclaimers &amp; limitation of liability</h2>
+  <p>The Service is provided "as is" and "as available," without warranties of any kind, express or implied, including as to accuracy, reliability, or fitness for a particular purpose. To the fullest extent permitted by law, we are not liable for indirect, incidental, or consequential damages arising from your use of the Service, or from purchase decisions made based on AI-generated estimates. Nothing in these Terms limits liability that cannot be limited under applicable law.</p>
+
+  <h2 id="law">9. Governing law</h2>
+  <p>These Terms are governed by the laws of the Federal Republic of Nigeria, without regard to conflict-of-law principles, unless a different law is required to apply to you under local consumer-protection rules.</p>
+
+  <h2 id="changes">10. Changes to these Terms</h2>
+  <p>We may update these Terms from time to time. If we make material changes, we'll update the "Last updated" date above and, where appropriate, notify you in-app or by email. Continuing to use Prism after changes take effect means you accept the updated Terms.</p>
+
+  <div class="legal-contact">
+    <h2 id="contact">11. Contact</h2>
+    <p>Questions about these Terms? Reach us at <a href="mailto:muhammedtesleemolatundun@gmail.com">muhammedtesleemolatundun@gmail.com</a>. See also our <a href="{{ url_for('privacy') }}">Privacy Policy</a>.</p>
+  </div>
+</div>
+
+</body>
+</html>

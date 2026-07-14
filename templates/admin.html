@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Admin — Prism Analytics</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+</head>
+<body class="admin-body">
+
+<header class="admin-head">
+  <div class="admin-head__mark">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism">
+    <span>PR<b>ISM</b> <em>Admin</em></span>
+  </div>
+  <div class="admin-head__right">
+    <div class="admin-range" id="admin-range">
+      <button data-days="7" class="is-active">7d</button>
+      <button data-days="14">14d</button>
+      <button data-days="30">30d</button>
+      <button data-days="90">90d</button>
+    </div>
+    <a href="{{ url_for('dashboard') }}" class="admin-exit">&larr; Back to Prism</a>
+  </div>
+</header>
+
+<main class="admin-main">
+
+  <section class="admin-kpis" id="admin-kpis">
+    <div class="admin-kpi"><span class="admin-kpi__label">Total users</span><span class="admin-kpi__value" id="kpi-total-users">—</span></div>
+    <div class="admin-kpi"><span class="admin-kpi__label">Verified users</span><span class="admin-kpi__value" id="kpi-verified-users">—</span></div>
+    <div class="admin-kpi"><span class="admin-kpi__label">Active in range</span><span class="admin-kpi__value" id="kpi-active-users">—</span></div>
+    <div class="admin-kpi"><span class="admin-kpi__label">Successful logins</span><span class="admin-kpi__value" id="kpi-logins">—</span></div>
+    <div class="admin-kpi admin-kpi--warn"><span class="admin-kpi__label">Failed logins</span><span class="admin-kpi__value" id="kpi-failed-logins">—</span></div>
+    <div class="admin-kpi admin-kpi--warn"><span class="admin-kpi__label">Locked out now</span><span class="admin-kpi__value" id="kpi-locked-out">—</span></div>
+  </section>
+
+  <section class="admin-grid">
+    <div class="admin-card admin-card--wide">
+      <h2>Signups per day</h2>
+      <div class="admin-chart-wrap"><canvas id="chart-signups"></canvas></div>
+    </div>
+    <div class="admin-card admin-card--wide">
+      <h2>Logins per day</h2>
+      <p class="admin-card__sub">Successful vs. failed attempts — a spike in failed attempts can flag brute-force activity.</p>
+      <div class="admin-chart-wrap"><canvas id="chart-logins"></canvas></div>
+    </div>
+  </section>
+
+  <section class="admin-grid">
+    <div class="admin-card">
+      <h2>Most used features</h2>
+      <p class="admin-card__sub">Search, chat, scanner, recommend, and Copilot tools.</p>
+      <div class="admin-chart-wrap admin-chart-wrap--short"><canvas id="chart-features"></canvas></div>
+    </div>
+    <div class="admin-card">
+      <h2>Most visited screens</h2>
+      <div class="admin-chart-wrap admin-chart-wrap--short"><canvas id="chart-views"></canvas></div>
+    </div>
+    <div class="admin-card">
+      <h2>Where people are before they log out</h2>
+      <p class="admin-card__sub">The screen someone was on right before hitting "Log Out".</p>
+      <div class="admin-chart-wrap admin-chart-wrap--short"><canvas id="chart-leaving"></canvas></div>
+    </div>
+  </section>
+
+  <section class="admin-card">
+    <h2>Recent signups</h2>
+    <table class="admin-table" id="admin-signups-table">
+      <thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Joined</th></tr></thead>
+      <tbody><tr><td colspan="4" class="admin-empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>

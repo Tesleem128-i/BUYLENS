@@ -32,6 +32,7 @@
   {% endwith %}
 
   <form class="auth-form" method="POST" action="{{ url_for('signup') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="auth-field">
       <label for="full_name">Full name</label>
       <input type="text" id="full_name" name="full_name" placeholder="Ada Lovelace" value="{{ full_name or '' }}" required>
@@ -56,6 +57,11 @@
       <label for="interest">Interests</label>
       <input type="text" id="interest" name="interest" placeholder="Gaming, Travel, Tech" value="{{ interest or '' }}">
     </div>
+
+    <label class="auth-agree">
+      <input type="checkbox" id="agree_terms" name="agree_terms" required>
+      <span>I agree to Prism's <a href="{{ url_for('terms') }}" target="_blank" rel="noopener">Terms of Service</a> and <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+    </label>
 
     <button type="submit" class="auth-submit">Create account</button>
   </form>
