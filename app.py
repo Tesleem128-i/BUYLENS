@@ -2062,8 +2062,10 @@ def api_ai_chat_stream():
             yield "event: done\ndata: {}\n\n"
         return Response(stream_with_context(_no_key()), mimetype="text/event-stream")
 
+    memory_notes = build_memory_profile(session["user_id"])["notes"]
+
     return Response(
-        stream_with_context(lens_stream(contents, system_instruction=build_system_prompt(), model=chat_model)),
+        stream_with_context(lens_stream(contents, system_instruction=build_system_prompt(memory_notes), model=chat_model)),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
