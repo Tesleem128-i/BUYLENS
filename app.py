@@ -653,28 +653,34 @@ with app.app_context():
     db.create_all()
 
     # db.create_all() only creates tables that don't exist yet — it never adds
-    # a new column to a table that's already there. Since `country`/`currency`
-    # were added to an existing `user` table, patch them in directly for any
-    # database created before this change.
-    try:
-        from sqlalchemy import text as _sqltext
-        with db.engine.connect() as _conn:
-            _cols = {row[1] if db.engine.dialect.name == "sqlite" else row[0]
-                     for row in _conn.execute(_sqltext(
-                         "SELECT * FROM information_schema.columns WHERE table_name='user'"
-                         if db.engine.dialect.name != "sqlite" else "PRAGMA table_info(user)"
-                     ))}
-            if "country" not in _cols:
-                _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN country VARCHAR(80) DEFAULT '{DEFAULT_COUNTRY}'"))
-            if "currency" not in _cols:
-                _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN currency VARCHAR(8) DEFAULT '{DEFAULT_CURRENCY}'"))
-            if "failed_login_attempts" not in _cols:
-                _conn.execute(_sqltext("ALTER TABLE \"user\" ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"))
-            if "lockout_until" not in _cols:
-                _conn.execute(_sqltext("ALTER TABLE \"user\" ADD COLUMN lockout_until TIMESTAMP"))
-            _conn.commit()
-    except Exception as _mig_exc:
-        app.logger.warning(f"Skipped column migration check: {_mig_exc}")
+    # a new column to a table that's already there. Since `country`/`currency`/
+    # `failed_login_attempts`/`lockout_until` were added to an existing `user`
+    # table, patch them in directly for any database created before this
+    # change. Each column is added independently, in its own transaction, so
+    # one already-existing column can never block the others.
+    _new_user_columns = {
+        "country": f"VARCHAR(80) DEFAULT '{DEFAULT_COUNTRY}'",
+        "currency": f"VARCHAR(8) DEFAULT '{DEFAULT_CURRENCY}'",
+        "failed_login_attempts": "INTEGER DEFAULT 0",
+        "lockout_until": "TIMESTAMP",
+    }
+    from sqlalchemy import text as _sqltext
+    is_sqlite = db.engine.dialect.name == "sqlite"
+    for _col, _decl in _new_user_columns.items():
+        try:
+            with db.engine.connect() as _conn:
+                if is_sqlite:
+                    existing = {row[1] for row in _conn.execute(_sqltext("PRAGMA table_info(user)"))}
+                    if _col in existing:
+                        continue
+                    _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN {_col} {_decl}"))
+                else:
+                    # IF NOT EXISTS makes this safe to re-run on every deploy,
+                    # regardless of whether a previous run already added it.
+                    _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS {_col} {_decl}"))
+                _conn.commit()
+        except Exception as _mig_exc:
+            app.logger.warning(f"Skipped migration for user.{_col}: {_mig_exc}")
 
     # Add demo account if it doesn't exist
     demo_email = "demo@gmail.com"
