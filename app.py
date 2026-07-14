@@ -987,6 +987,69 @@ def send_reset_email(user, token):
         return False
 
 
+CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def send_contact_message_email(name, email, message):
+    """Forward a public contact-form submission (landing page / legal pages)
+    to the Prism inbox through Brevo. Reply-To is set to the visitor's own
+    address so replying from the inbox goes straight back to them."""
+    safe_message = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    safe_name = (name or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:520px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:26px;margin:0 0 4px;">
+          PR<span style="color:#4CE0FF;">ISM</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          New contact message
+        </p>
+        <p style="color:#F2F5FF;font-size:14px;line-height:1.6;margin:0 0 4px;">
+          <strong>{safe_name}</strong> &lt;{email}&gt;
+        </p>
+        <div style="margin-top:18px;padding:18px 20px;background:rgba(255,255,255,.04);
+                    border:1px solid rgba(255,255,255,.09);border-radius:12px;color:#F2F5FF;
+                    font-size:14px;line-height:1.7;">
+          {safe_message}
+        </div>
+        <p style="color:#8B93AE;font-size:12px;margin-top:24px;line-height:1.6;">
+          Reply directly to this email to respond to {safe_name}.
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": next(iter(ADMIN_EMAILS))}],
+        "replyTo": {"email": email, "name": name or email},
+        "subject": f"Prism contact form — {name or email}",
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY or "",
+        "content-type": "application/json",
+    }
+
+    if not BREVO_API_KEY:
+        app.logger.warning("BREVO_API_KEY is not set — skipping contact email from %s", email)
+        return False
+
+    try:
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code in (200, 201):
+            return True
+        app.logger.warning("Brevo contact email HTTP %s: %s", response.status_code, response.text[:500])
+        return False
+    except requests.RequestException as exc:
+        app.logger.error("Brevo contact email send failed: %s", exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -1007,6 +1070,36 @@ def terms():
 @app.route("/privacy")
 def privacy():
     return render_template("privacy.html", legal_updated=LEGAL_LAST_UPDATED)
+
+
+@app.route("/api/contact", methods=["POST"])
+@limiter.limit("5 per hour")
+def api_contact():
+    """Public contact form — embedded on the landing page, Terms, and
+    Privacy pages. Forwards the message to the Prism inbox via Brevo."""
+    body = request.get_json(force=True, silent=True) or request.form or {}
+    name = (body.get("name") or "").strip()
+    email = (body.get("email") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+
+    if not name or not email or not message:
+        return jsonify({"error": "Fill in your name, email, and message."}), 400
+    if len(name) > 120 or len(email) > 180:
+        return jsonify({"error": "That name or email looks too long."}), 400
+    if not CONTACT_EMAIL_RE.match(email):
+        return jsonify({"error": "Enter a valid email address."}), 400
+    if len(message) < 5:
+        return jsonify({"error": "Your message is a bit too short."}), 400
+    if len(message) > 4000:
+        return jsonify({"error": "Keep your message under 4000 characters."}), 400
+
+    sent = send_contact_message_email(name, email, message)
+    if not sent:
+        return jsonify({
+            "error": "We couldn't send that right now — please try again shortly, "
+                     "or email us directly at muhammedtesleemolatundun@gmail.com."
+        }), 502
+    return jsonify({"success": True})
 
 
 @app.route("/signup", methods=["GET", "POST"])

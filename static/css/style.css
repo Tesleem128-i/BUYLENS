@@ -145,7 +145,100 @@ body{
   .intro__prism{ width:56px; height:50px; }
 }
 @media (prefers-reduced-motion: reduce){
-  .intro__blade, .intro__hud, .intro__brackets, .intro__flash, .intro__prism-beam, .intro__prism-fan path{ transition:none !important; animation:none !important; opacity:1; stroke-dashoffset:0; }
+  .intro__blade, .intro__hud, .intro__brackets, .intro__flash, .intro__prism-beam, .intro__prism-fan path, .intro__ring, .intro__particles{ transition:none !important; animation:none !important; opacity:1; stroke-dashoffset:0; }
+  .intro__particles, .intro__pulse{ display:none; }
+}
+
+/* ---------- intro upgrades: particle convergence field, energy rings, skip control ---------- */
+.intro__particles{
+  position:fixed; inset:0; z-index:100; pointer-events:none;
+  mix-blend-mode:screen; opacity:.85;
+}
+.intro{ transition:opacity .6s ease; }
+.intro.is-fading{ opacity:0; }
+
+.intro__pulse{
+  position:absolute; inset:0; z-index:101;
+  display:flex; align-items:center; justify-content:center;
+  pointer-events:none;
+}
+.intro__ring{
+  position:absolute; width:120px; height:120px; border-radius:50%;
+  border:1px solid var(--cyan); opacity:0;
+  animation:ringPulse 2.4s ease-out infinite;
+}
+.intro__ring:nth-child(2){ animation-delay:.8s; border-color:var(--violet); }
+.intro__ring:nth-child(3){ animation-delay:1.6s; border-color:#ff8a4d; }
+.intro.is-opening .intro__pulse{ opacity:0; transition:opacity .3s ease; }
+@keyframes ringPulse{
+  0%{ transform:scale(.3); opacity:.55; }
+  100%{ transform:scale(2.8); opacity:0; }
+}
+
+.intro__skip{
+  position:fixed; right:5vw; bottom:6vh; z-index:110;
+  background:transparent; border:1px solid var(--glass-brd); color:var(--ink-dim);
+  font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+  padding:9px 18px; border-radius:100px; cursor:pointer;
+  opacity:0; transform:translateY(6px);
+  transition:opacity .4s ease .5s, transform .4s ease .5s, border-color .3s, color .3s;
+}
+.intro__skip.is-visible{ opacity:1; transform:translateY(0); }
+.intro__skip:hover{ border-color:var(--cyan); color:var(--cyan); }
+.intro.is-opening .intro__skip{ opacity:0; pointer-events:none; }
+
+@media (max-width:600px){
+  .intro__skip{ right:6vw; bottom:4vh; padding:8px 14px; font-size:10px; }
+  .intro__ring{ width:90px; height:90px; }
+}
+
+/* ============================================================
+   CONTACT FORM — shared across landing + legal pages
+   ============================================================ */
+.contact-form{
+  display:flex; flex-direction:column; gap:16px; margin-top:22px; max-width:560px;
+  text-align:left;
+}
+.contact-form--wide{ max-width:640px; margin-left:auto; margin-right:auto; margin-top:40px; }
+.contact-form__row{ display:flex; gap:16px; }
+.contact-form__row .contact-form__field{ flex:1; min-width:0; }
+.contact-form__field{ display:flex; flex-direction:column; gap:8px; }
+.contact-form__field label{
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--ink-dim);
+}
+.contact-form input, .contact-form textarea{
+  width:100%; background:rgba(255,255,255,.03); border:1px solid var(--glass-brd);
+  border-radius:12px; padding:13px 16px; color:var(--ink); font-family:var(--body); font-size:.92rem;
+  outline:none; resize:vertical; transition:border-color .3s, box-shadow .3s, background .3s;
+}
+.contact-form input::placeholder, .contact-form textarea::placeholder{ color:rgba(139,147,174,.55); }
+.contact-form input:focus, .contact-form textarea:focus{
+  border-color:var(--cyan); background:rgba(76,224,255,.05);
+  box-shadow:0 0 0 3px rgba(76,224,255,.12);
+}
+.contact-form__submit{
+  align-self:flex-start; border:none; padding:14px 28px; border-radius:100px;
+  font-family:var(--mono); font-size:.8rem; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--void); font-weight:700; cursor:pointer;
+  background:linear-gradient(90deg,var(--cyan),var(--violet));
+  box-shadow:0 0 30px rgba(76,224,255,.25);
+  transition:transform .3s, box-shadow .3s, opacity .3s;
+}
+.contact-form__submit:hover{ transform:translateY(-2px); box-shadow:0 0 42px rgba(157,107,255,.38); }
+.contact-form__submit:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+.contact-form__status{
+  font-size:.85rem; min-height:1.2em; opacity:0; transition:opacity .25s ease;
+}
+.contact-form__status.is-visible{ opacity:1; }
+.contact-form__status--error{ color:#ff9b9b; }
+.contact-form__status--info{ color:var(--ink-dim); }
+.contact-form__status--success{ color:var(--cyan); }
+
+.scene--contact{ text-align:center; }
+
+@media (max-width:600px){
+  .contact-form__row{ flex-direction:column; gap:16px; }
 }
 
 /* ---------- background canvas ---------- */

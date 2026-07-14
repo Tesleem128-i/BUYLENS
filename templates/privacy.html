@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — Prism</title>
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -85,9 +86,31 @@
 
   <div class="legal-contact">
     <h2 id="contact">10. Contact</h2>
-    <p>Questions about this policy, or want to exercise a data right? Reach us at <a href="mailto:muhammedtesleemolatundun@gmail.com">muhammedtesleemolatundun@gmail.com</a>. See also our <a href="{{ url_for('terms') }}">Terms of Service</a>.</p>
+    <p>Questions about this policy, or want to exercise a data right? Reach us at <a href="mailto:muhammedtesleemolatundun@gmail.com">muhammedtesleemolatundun@gmail.com</a>, or send a message directly below. See also our <a href="{{ url_for('terms') }}">Terms of Service</a>.</p>
+
+    <form class="contact-form" data-contact-form>
+      <div class="contact-form__row">
+        <div class="contact-form__field">
+          <label for="c-name-privacy">Name</label>
+          <input type="text" id="c-name-privacy" name="name" placeholder="Your name" required maxlength="120">
+        </div>
+        <div class="contact-form__field">
+          <label for="c-email-privacy">Email</label>
+          <input type="email" id="c-email-privacy" name="email" placeholder="you@example.com" required maxlength="180">
+        </div>
+      </div>
+      <div class="contact-form__field">
+        <label for="c-message-privacy">Message</label>
+        <textarea id="c-message-privacy" name="message" rows="4" placeholder="How can we help?" required maxlength="4000"></textarea>
+      </div>
+      <button type="submit" class="contact-form__submit">
+        <span class="contact-form__submit-label">Send message</span>
+      </button>
+      <p class="contact-form__status" data-contact-status></p>
+    </form>
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/contact.js') }}"></script>
 </body>
 </html>

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Prism — Never Regret a Purchase</title>
 <meta name="description" content="Prism is the AI buying intelligence platform. Scan it. Know it. Never regret it.">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -15,6 +16,7 @@
 
 <!-- Intro: lens calibration boot sequence (plays once on load) -->
 <div class="intro" id="intro" aria-hidden="true">
+  <canvas id="intro-particles" class="intro__particles" aria-hidden="true"></canvas>
   <div class="intro__brackets">
     <span class="intro__bracket intro__bracket--tl"></span>
     <span class="intro__bracket intro__bracket--tr"></span>
@@ -29,6 +31,11 @@
   <div class="intro__blade" style="--i:5"></div>
   <div class="intro__blade" style="--i:6"></div>
   <div class="intro__blade" style="--i:7"></div>
+  <div class="intro__pulse" aria-hidden="true">
+    <span class="intro__ring"></span>
+    <span class="intro__ring"></span>
+    <span class="intro__ring"></span>
+  </div>
   <div class="intro__hud">
     <svg class="intro__prism" viewBox="0 0 72 64" aria-hidden="true">
       <path class="intro__prism-beam" d="M2 20 L30 40"></path>
@@ -45,6 +52,7 @@
     <div class="intro__status" id="intro-status">ALIGNING PRISM</div>
     <div class="intro__bar"><div class="intro__bar-fill" id="intro-bar"></div></div>
   </div>
+  <button type="button" class="intro__skip" id="intro-skip">Skip &rarr;</button>
   <div class="intro__flash"></div>
 </div>
 
@@ -296,6 +304,33 @@
   </div>
 </section>
 
+<!-- ============ 08 : CONTACT ============ -->
+<section class="scene scene--contact" id="contact">
+  <div class="eyebrow">Get in Touch</div>
+  <h2 class="scene-title">Questions?<br>Talk to us.</h2>
+  <p class="scene-sub">Bug report, partnership idea, or just curious how Prism works — send it over, straight to our inbox.</p>
+  <form class="contact-form contact-form--wide" data-contact-form>
+    <div class="contact-form__row">
+      <div class="contact-form__field">
+        <label for="c-name-home">Name</label>
+        <input type="text" id="c-name-home" name="name" placeholder="Your name" required maxlength="120">
+      </div>
+      <div class="contact-form__field">
+        <label for="c-email-home">Email</label>
+        <input type="email" id="c-email-home" name="email" placeholder="you@example.com" required maxlength="180">
+      </div>
+    </div>
+    <div class="contact-form__field">
+      <label for="c-message-home">Message</label>
+      <textarea id="c-message-home" name="message" rows="5" placeholder="What's on your mind?" required maxlength="4000"></textarea>
+    </div>
+    <button type="submit" class="contact-form__submit">
+      <span class="contact-form__submit-label">Send message</span>
+    </button>
+    <p class="contact-form__status" data-contact-status></p>
+  </form>
+</section>
+
 <footer class="footer">
   <span>© 2026 Prism. AI Buying Intelligence.</span>
   <span>Lagos · Remote-first</span>
@@ -304,5 +339,6 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
 <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+<script src="{{ url_for('static', filename='js/contact.js') }}"></script>
 </body>
 </html>

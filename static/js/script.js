@@ -11,17 +11,91 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
   const intro = document.getElementById('intro');
   if(!intro) return;
 
+  let particleRaf = null;
+  let introTimeout = null;
+
   const finish = () => {
-    intro.remove();
-    document.documentElement.style.overflow = '';
+    if(particleRaf) cancelAnimationFrame(particleRaf);
+    intro.classList.add('is-fading');
+    setTimeout(() => {
+      intro.remove();
+      document.documentElement.style.overflow = '';
+    }, 620);
   };
 
   document.documentElement.style.overflow = 'hidden';
+
+  /* skip control — works even before the sequence finishes naturally,
+     and even in reduced-motion mode */
+  const skipBtn = document.getElementById('intro-skip');
+  if(skipBtn){
+    setTimeout(() => skipBtn.classList.add('is-visible'), 500);
+    skipBtn.addEventListener('click', () => {
+      if(introTimeout) clearTimeout(introTimeout);
+      intro.classList.add('is-opening');
+      finish();
+    });
+  }
 
   if(reduceMotion){
     setTimeout(finish, 200);
     return;
   }
+
+  /* ---------------------------------------------------------------
+     Particle convergence field: sparks drift in from the edges of
+     the screen toward the prism glyph at center, giving the boot
+     sequence a sense of energy gathering before the light-split.
+  --------------------------------------------------------------- */
+  (function particleField(){
+    const canvas = document.getElementById('intro-particles');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let pw, ph, sparks;
+    const hues = ['76,224,255', '157,107,255', '255,138,77', '255,210,77', '140,255,140'];
+
+    function resize(){
+      pw = canvas.width = window.innerWidth;
+      ph = canvas.height = window.innerHeight;
+    }
+    function build(){
+      const cx = pw / 2, cy = ph / 2 - 8;
+      const count = Math.min(60, Math.floor((pw * ph) / 22000));
+      sparks = Array.from({length:count}, () => {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 220 + Math.random() * Math.max(pw, ph) * 0.45;
+        return {
+          x: cx + Math.cos(angle) * dist,
+          y: cy + Math.sin(angle) * dist,
+          cx, cy,
+          t: Math.random(),
+          speed: 0.005 + Math.random() * 0.009,
+          r: Math.random() * 1.3 + 0.5,
+          hue: hues[Math.floor(Math.random() * hues.length)]
+        };
+      });
+    }
+    function tick(){
+      ctx.clearRect(0, 0, pw, ph);
+      sparks.forEach(p => {
+        p.t += p.speed;
+        if(p.t > 1) p.t = 0;
+        const ease = 1 - Math.pow(1 - p.t, 3);
+        const x = p.x + (p.cx - p.x) * ease;
+        const y = p.y + (p.cy - p.y) * ease;
+        const alpha = 0.7 * (1 - p.t * 0.5);
+        ctx.beginPath();
+        ctx.arc(x, y, p.r + p.t * 0.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${p.hue},${alpha})`;
+        ctx.shadowColor = `rgba(${p.hue},0.9)`;
+        ctx.shadowBlur = 8;
+        ctx.fill();
+      });
+      particleRaf = requestAnimationFrame(tick);
+    }
+    resize(); build(); tick();
+    window.addEventListener('resize', () => { resize(); build(); });
+  })();
 
   const scrambleEl = document.getElementById('intro-scramble');
   const statusEl = document.getElementById('intro-status');
@@ -58,7 +132,7 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
     }
   });
 
-  setTimeout(() => {
+  introTimeout = setTimeout(() => {
     intro.classList.add('is-opening');
     setTimeout(finish, 1300);
   }, 1950);
