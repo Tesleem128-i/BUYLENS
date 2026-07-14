@@ -63,18 +63,31 @@ PRISM_SYSTEM_PROMPT_BASE = (
     "You are Prism, the AI shopping intelligence platform. Speak with calm, specific "
     "confidence — never generic. Ground every answer in the exact product/category mentioned. "
     "For comparisons or recommendations, give a clear verdict, concrete tradeoffs (performance, "
-    "battery, camera, value, repairability, long-term cost) and a short 'why' per pick. Use "
-    "Naira (NGN) when the user is budgeting in Naira, otherwise the implied currency. Reason "
+    "battery, camera, value, repairability, long-term cost) and a short 'why' per pick. Reason "
     "from your knowledge of typical specs and pricing bands, and note that figures are "
     "estimates. Format responses in clean markdown: headers, bold, tables, bullet lists.\n\n"
     "VERIFICATION DISCIPLINE: You cannot browse live listings, so never state a spec, price, "
     "release date or availability claim as flat fact — frame it as your best estimate and "
     "explicitly tell the shopper to confirm the live price, condition, and stock on the "
-    "marketplace links/images the app attaches to your picks before paying. If you are unsure "
+    "marketplace links the app attaches to your picks before paying. If you are unsure "
     "about a specific number, say so plainly rather than inventing false precision. Never "
     "fabricate a marketplace name, URL, or review quote — the app attaches real marketplace "
-    "links and product photos itself; you only need to name the product clearly and accurately "
-    "so those lookups succeed.\n\n"
+    "links itself; you only need to name the product clearly and accurately so those lookups "
+    "succeed.\n\n"
+    "TRUTHFULNESS OVER HEDGING: Shoppers are making real financial decisions with your answers, "
+    "so be direct, not vague. Don't hide behind filler words like 'probably', 'might', 'could "
+    "be', or 'it's possible that' when you actually have a confident, specific answer — state it "
+    "plainly. Reserve hedged language only for the genuinely uncertain parts, and even then say "
+    "exactly what you're unsure about (e.g. 'exact price varies by retailer' is useful; 'it's "
+    "probably fine' is not). Never generate a filler price, spec, or verdict just to fill a field "
+    "— if you truly cannot estimate something, say so in plain words instead of guessing a "
+    "plausible-looking but made-up number.\n\n"
+    "BUDGET HONESTY: If a shopper's stated budget is unrealistic for what they're asking for "
+    "(too small for the category, or for the specific product named), say so clearly and early — "
+    "do not pretend a workable option exists at that price. Tell them plainly how much more they "
+    "would realistically need, or what real tradeoffs (older model, smaller storage, refurbished, "
+    "different category) actually fit their budget. Never stretch, round down, or reframe a "
+    "product's real price to make it sound like it fits a budget it doesn't.\n\n"
     "NEUTRALITY & ACCURACY: Do not favor any brand, retailer, or product for any reason other "
     "than the merits relevant to the shopper's stated needs and budget — never because a brand "
     "is more popular, more premium-sounding, or mentioned more often in training data. When two "
@@ -85,19 +98,74 @@ PRISM_SYSTEM_PROMPT_BASE = (
     "Do not state opinions on contested political or social topics as if they were settled facts."
 )
 
-# --- Live USD -> NGN rate (and any other currency Prism quotes) -----------
+# --- Currencies Prism can quote in, and the countries offered in Settings ---
+# The shopper picks ONE currency (and country) once, in Settings, and every
+# AI answer for that account is pinned to it — this stops the previous
+# behaviour where the model would drift between NGN/USD/etc mid-conversation.
+CURRENCY_OPTIONS = [
+    {"code": "NGN", "symbol": "₦", "label": "Nigerian Naira (₦)"},
+    {"code": "USD", "symbol": "$", "label": "US Dollar ($)"},
+    {"code": "GBP", "symbol": "£", "label": "British Pound (£)"},
+    {"code": "EUR", "symbol": "€", "label": "Euro (€)"},
+    {"code": "GHS", "symbol": "₵", "label": "Ghanaian Cedi (₵)"},
+    {"code": "KES", "symbol": "KSh", "label": "Kenyan Shilling (KSh)"},
+    {"code": "ZAR", "symbol": "R", "label": "South African Rand (R)"},
+    {"code": "CAD", "symbol": "$", "label": "Canadian Dollar ($)"},
+    {"code": "INR", "symbol": "₹", "label": "Indian Rupee (₹)"},
+]
+_CURRENCY_SYMBOLS = {c["code"]: c["symbol"] for c in CURRENCY_OPTIONS}
+_VALID_CURRENCY_CODES = {c["code"] for c in CURRENCY_OPTIONS}
+
+COUNTRY_CURRENCY_MAP = {
+    "Nigeria": "NGN", "Ghana": "GHS", "Kenya": "KES", "South Africa": "ZAR",
+    "United States": "USD", "United Kingdom": "GBP", "Canada": "CAD",
+    "India": "INR", "Ireland": "EUR", "Germany": "EUR", "France": "EUR",
+    "Other": "USD",
+}
+COUNTRY_OPTIONS = list(COUNTRY_CURRENCY_MAP.keys())
+
+DEFAULT_CURRENCY = "NGN"
+DEFAULT_COUNTRY = "Nigeria"
+
+
+def normalize_currency(code):
+    code = (code or "").strip().upper()
+    return code if code in _VALID_CURRENCY_CODES else DEFAULT_CURRENCY
+
+
+def account_currency():
+    """The logged-in shopper's fixed account currency (set once in Settings).
+    Routes use this instead of trusting a currency passed in the request body,
+    so a shopper's quotes never drift between currencies mid-session."""
+    try:
+        uid = session.get("user_id")
+        u = User.query.get(uid) if uid else None
+        return u.currency if u and u.currency else DEFAULT_CURRENCY
+    except Exception:
+        return DEFAULT_CURRENCY
+
+
+# --- Live FX rates, fetched once and cached -- never guessed by the model ---
 # The model has no live internet access, so instead of letting it *guess* an
 # exchange rate from stale training data (which is how it invented a wildly
-# wrong ₦/₦ ratio before), we fetch a real rate here and hand it to the model
-# as a fact it must use. Cached for a few hours so we don't hammer the API.
+# wrong ratio before, and how it used to drift between currencies mid-answer),
+# we fetch real rates here and hand the model a single fixed number it must
+# use for the shopper's chosen currency. Cached for a few hours so the number
+# stays STABLE across a session instead of subtly changing between requests.
 FX_API_URL = "https://open.er-api.com/v6/latest/USD"  # free, keyless, updated ~daily
 FX_CACHE_TTL_SECONDS = 6 * 3600
-FX_FALLBACK_USD_NGN = 1550.0  # only used if the FX API is unreachable
+FX_FALLBACK_RATES = {  # only used if the FX API is unreachable
+    "NGN": 1550.0, "USD": 1.0, "GBP": 0.78, "EUR": 0.92, "GHS": 15.3,
+    "KES": 129.0, "ZAR": 18.1, "CAD": 1.37, "INR": 83.5,
+}
 _fx_cache = {"rates": None, "fetched_at": 0}
 
 
 def get_fx_rates():
-    """Return the cached (or freshly fetched) {currency: rate_per_usd} dict."""
+    """Return the cached (or freshly fetched) {currency: rate_per_usd} dict.
+    The same cached snapshot is served to every request within the TTL, so
+    the rate a shopper sees stays consistent instead of shifting from one
+    call to the next."""
     now = time.time()
     if _fx_cache["rates"] and (now - _fx_cache["fetched_at"] < FX_CACHE_TTL_SECONDS):
         return _fx_cache["rates"]
@@ -112,26 +180,50 @@ def get_fx_rates():
     except Exception:
         pass
     # Keep serving a stale cache rather than nothing, if we have one.
-    return _fx_cache["rates"] or {"NGN": FX_FALLBACK_USD_NGN}
+    return _fx_cache["rates"] or FX_FALLBACK_RATES
+
+
+def get_usd_rate_for(currency):
+    """1 USD ≈ this many units of `currency`, from the cached live snapshot."""
+    currency = normalize_currency(currency)
+    rates = get_fx_rates()
+    rate = rates.get(currency) or FX_FALLBACK_RATES.get(currency, 1.0)
+    return round(float(rate), 4)
 
 
 def get_usd_to_ngn_rate():
-    rates = get_fx_rates()
-    return round(float(rates.get("NGN", FX_FALLBACK_USD_NGN)), 2)
+    return get_usd_rate_for("NGN")
 
 
-def build_system_prompt(memory_notes=None):
-    """System prompt + the current live FX rate, so Prism converts currency
-    correctly instead of inventing a number from memory. Optionally folds in
-    a shopper's derived preferences ("AI Shopping Memory") so recommendations
-    read as personalized instead of generic."""
-    rate = get_usd_to_ngn_rate()
-    fx_note = (
-        f"\n\nLIVE FX RATE (fetched just now, treat as authoritative): "
-        f"1 USD ≈ ₦{rate:,.2f} NGN. Always use this exact rate for any USD↔NGN "
-        f"conversion — show the arithmetic briefly if it's relevant, and mention "
-        f"that FX rates drift day to day so the shopper should sanity-check it "
-        f"against a live converter if it's been a while since this was fetched."
+def build_system_prompt(memory_notes=None, currency=None):
+    """System prompt + the shopper's fixed account currency and its current
+    live FX rate, so Prism always quotes in ONE currency instead of drifting
+    between them. Optionally folds in a shopper's derived preferences ("AI
+    Shopping Memory") so recommendations read as personalized, not generic."""
+    if currency is None:
+        # Fall back to whatever's on the logged-in account, so every route
+        # gets consistent currency behaviour even if it doesn't explicitly
+        # pass one in.
+        try:
+            uid = session.get("user_id")
+            u = User.query.get(uid) if uid else None
+            currency = u.currency if u else DEFAULT_CURRENCY
+        except Exception:
+            currency = DEFAULT_CURRENCY
+    currency = normalize_currency(currency)
+    symbol = _CURRENCY_SYMBOLS.get(currency, "")
+    rate = get_usd_rate_for(currency)
+    currency_note = (
+        f"\n\nSHOPPER'S FIXED CURRENCY: This account's currency is set to {currency} ({symbol}), "
+        f"chosen in Settings. Express EVERY price, budget figure, and estimate in {currency} "
+        f"only — never switch to another currency partway through a response, even if the "
+        f"product is more commonly priced in a different currency internationally. If you need "
+        f"to reason from a USD or NGN price band in your own knowledge, silently convert it to "
+        f"{currency} before presenting it to the shopper.\n\n"
+        f"LIVE FX RATE (fetched recently, treat as authoritative for this account): "
+        f"1 USD ≈ {symbol}{rate:,.4f} {currency}. Use this exact rate for any conversion — show "
+        f"the arithmetic briefly if it's relevant — and mention that FX rates drift day to day "
+        f"so the shopper should sanity-check it against a live converter if it's been a while."
     )
     memory_note = ""
     if memory_notes:
@@ -141,7 +233,7 @@ def build_system_prompt(memory_notes=None):
             "state it back as if you're guessing/reading their mind, just quietly "
             "factor it in):\n- " + "\n- ".join(memory_notes)
         )
-    return PRISM_SYSTEM_PROMPT_BASE + fx_note + memory_note
+    return PRISM_SYSTEM_PROMPT_BASE + currency_note + memory_note
 
 
 _CURRENCY_NUMBER_RE = re.compile(r"[\d,]+(?:\.\d+)?")
@@ -331,334 +423,27 @@ def marketplace_links(name):
 
 
 def enrich_picks(payload, key="picks", name_field="name"):
-    """Attach real marketplace links + an image-search query to every pick in a
-    list response, without ever letting the model itself invent a URL."""
+    """Attach real marketplace links to every pick in a list response, without
+    ever letting the model itself invent a URL. (The product-photo gallery
+    feature has been removed — the underlying image providers weren't
+    reliably returning real photos, so the app no longer promises pictures
+    it can't consistently deliver. Verified marketplace links remain the
+    trustworthy way for a shopper to see and confirm the actual item.)"""
     for p in (payload.get(key) or []):
         nm = (p.get(name_field) or "").strip()
         if nm:
             p["marketplace_links"] = marketplace_links(nm)
-            p["image_query"] = nm
     return payload
 
 
 def enrich_single(payload, name_field="product"):
-    """Attach marketplace links + image query for single-product responses
-    (reviews, price-history, vision scan)."""
+    """Attach marketplace links for single-product responses (reviews,
+    price-history, vision scan)."""
     nm = (payload.get(name_field) or "").strip()
     if nm:
         payload["marketplace_links"] = marketplace_links(nm)
-        payload["image_query"] = nm
     return payload
 
-
-# --- Product image lookup ---------------------------------------------------
-# Three providers, tried in order:
-#  1. Pexels — free stock-photo API (20,000 requests/month free, no card
-#     required, instant key). Better photo quality/index than the others,
-#     and its images are cleared for reuse — but it's stock-photography
-#     oriented, so it won't have photos of an exact obscure SKU (e.g. "Acer
-#     Nitro 5 AN515-58"), just generic "laptop" / "gaming laptop" shots. Get
-#     a free key at https://www.pexels.com/api/ and set PEXELS_API_KEY.
-#  2. DuckDuckGo image search (via the `ddgs` package) — NO API KEY, works
-#     out of the box. This scrapes the same image results a browser would
-#     get from duckduckgo.com, so it actually finds real photos of the
-#     specific product (product-page photos, retailer listings, etc.) far
-#     more often than a stock-photo API can. Be aware of what that costs:
-#       - It's unofficial. It can break if DuckDuckGo changes its frontend,
-#         and hitting it hard enough will get rate-limited — every failure
-#         is caught and just falls through to the next provider.
-#       - Unlike Pexels/Openverse, these results are NOT license-cleared.
-#         They're ordinary images from wherever they're hosted, same as if
-#         a person searched manually and right-clicked "copy image" — treat
-#         them as "here's what it looks like," not as pre-licensed assets.
-#         Provider is labeled accordingly so this is visible, not hidden.
-#  3. Openverse — free, keyless, openly-licensed images only. Last resort:
-#     used only if both of the above come back empty, so there's always
-#     *something* to show, and it's guaranteed license-safe.
-PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
-PEXELS_SEARCH_URL = "https://api.pexels.com/v1/search"
-OPENVERSE_IMAGE_URL = "https://api.openverse.org/v1/images/"
-
-try:
-    from ddgs import DDGS
-except Exception:
-    DDGS = None
-
-# Angles we try to give the "view it from every side" feel. The first hit per
-# angle wins; angles that come back empty are simply omitted client-side.
-IMAGE_ANGLES = [
-    {"label": "Front", "suffix": "front view product photo"},
-    {"label": "Side", "suffix": "side view product photo"},
-    {"label": "Back", "suffix": "back view product photo"},
-    {"label": "Close-up", "suffix": "close up detail"},
-    {"label": "In Use", "suffix": "in hand lifestyle photo"},
-]
-
-
-def _pexels_image_search(query, count=2):
-    if not PEXELS_API_KEY:
-        app.logger.warning("Pexels image search skipped: no API key configured")
-        return []
-    try:
-        resp = requests.get(
-            PEXELS_SEARCH_URL,
-            headers={"Authorization": PEXELS_API_KEY},
-            params={
-                "query": query,
-                "per_page": max(1, min(count, 15)),
-            },
-            timeout=8,
-        )
-        if resp.status_code != 200:
-            app.logger.warning(
-                "Pexels image search HTTP %s for query %r: %s",
-                resp.status_code, query, resp.text[:500]
-            )
-            return []
-        body = resp.json()
-        photos = body.get("photos") or []
-        if not photos:
-            app.logger.info("Pexels image search returned 0 photos for query %r", query)
-        normalized = []
-        for p in photos:
-            src = p.get("src") or {}
-            url = src.get("large") or src.get("original")
-            if not url:
-                continue
-            normalized.append({
-                "url": url,
-                "thumbnail": src.get("medium") or url,
-                "title": p.get("alt") or "",
-                "landing_url": p.get("url") or "",
-                "credit": p.get("photographer") or "Pexels",
-                "provider": "Pexels",
-            })
-        return normalized
-    except Exception as e:
-        app.logger.warning("Pexels image search exception for query %r: %s", query, e)
-        return []
-
-
-def _duckduckgo_image_search(query, count=2):
-    """Keyless real-product image search via an unofficial DuckDuckGo scrape.
-    See the header comment above for the license-status caveat — every
-    result is tagged with a provider label that makes that visible in the UI
-    rather than implying these are cleared stock photos."""
-    if DDGS is None:
-        return []
-    try:
-        with DDGS() as ddgs:
-            results = ddgs.images(query, max_results=max(1, min(count, 10)), safesearch="moderate")
-        normalized = []
-        for r in results or []:
-            url = r.get("image") or r.get("thumbnail")
-            if not url:
-                continue
-            normalized.append({
-                "url": url,
-                "thumbnail": r.get("thumbnail") or url,
-                "title": r.get("title") or "",
-                "landing_url": r.get("url") or "",
-                "credit": r.get("source") or "",
-                "provider": "Web image — verify rights before reuse",
-            })
-        return normalized
-    except Exception as e:
-        # Rate-limited, blocked, or DuckDuckGo changed something on their
-        # end — expected occasionally for an unofficial scrape, not a bug.
-        app.logger.info("DuckDuckGo image search unavailable for %r: %s", query, e)
-        return []
-
-
-def _openverse_search(query, page_size=1):
-    try:
-        resp = requests.get(
-            OPENVERSE_IMAGE_URL,
-            params={"q": query, "page_size": page_size, "license_type": "commercial,modification"},
-            timeout=8,
-            headers={"User-Agent": "Prism/1.0 (product visual search)"},
-        )
-        if resp.status_code != 200:
-            return []
-        normalized = []
-        for r in resp.json().get("results", []):
-            url = r.get("url") or r.get("thumbnail")
-            if not url:
-                continue
-            normalized.append({
-                "url": url,
-                "thumbnail": r.get("thumbnail") or url,
-                "title": r.get("title") or "",
-                "landing_url": r.get("foreign_landing_url") or "",
-                "credit": r.get("creator") or "",
-                "provider": "Openverse (CC)",
-            })
-        return normalized
-    except Exception:
-        return []
-
-
-def _search_images(query, count=2):
-    """Pexels first (if configured, license-safe); then a keyless DuckDuckGo
-    scrape for real-product coverage (no license guarantee, labeled as such);
-    Openverse last as a keyless, always-safe fallback."""
-    results = _pexels_image_search(query, count=count)
-    if results:
-        return results
-    results = _duckduckgo_image_search(query, count=count)
-    if results:
-        return results
-    return _openverse_search(query, page_size=count)
-
-
-# Pexels is stock photography, not a product-photo index — it has no idea
-# what an "Acer Nitro 5 AN515-58" is. If the specific/model-name query comes
-# up empty, fall back to a generic category term so shoppers at least see a
-# representative photo instead of nothing (or, worse, an unrelated product).
-# This is only used as a last resort and is always labeled "Representative"
-# rather than implied to be the exact unit.
-CATEGORY_KEYWORDS = [
-    ("laptop", "laptop computer"),
-    ("notebook", "laptop computer"),
-    ("macbook", "laptop computer"),
-    ("smartphone", "smartphone"),
-    ("phone", "smartphone"),
-    ("tablet", "tablet computer"),
-    ("ipad", "tablet computer"),
-    ("earbuds", "wireless earbuds"),
-    ("earbud", "wireless earbuds"),
-    ("headphone", "headphones"),
-    ("headset", "headphones"),
-    ("smartwatch", "smartwatch"),
-    ("watch", "smartwatch"),
-    ("camera", "camera"),
-    ("monitor", "computer monitor"),
-    ("television", "television"),
-    (" tv ", "television"),
-    ("speaker", "bluetooth speaker"),
-    ("router", "wifi router"),
-    ("keyboard", "computer keyboard"),
-    ("mouse", "computer mouse"),
-    ("printer", "printer"),
-    ("console", "game console"),
-    ("drone", "drone"),
-]
-
-
-def _generic_category_query(product_name):
-    name_lower = f" {product_name.lower()} "
-    for keyword, generic_term in CATEGORY_KEYWORDS:
-        if keyword in name_lower:
-            return generic_term
-    return None
-
-
-_IMAGE_STOPWORDS = {
-    "the", "a", "an", "of", "with", "and", "for", "pro", "plus", "max", "new",
-    "best", "in", "on", "by", "series", "edition", "gen", "generation",
-}
-
-
-def _extract_keywords(name):
-    words = re.findall(r"[a-zA-Z0-9]+", (name or "").lower())
-    return [w for w in words if len(w) >= 3 and w not in _IMAGE_STOPWORDS]
-
-
-def _image_is_relevant(title, product_name):
-    """Guard against showing a photo of the wrong kind of product. Real
-    product photos rarely have the exact model name in their alt text, so we
-    don't require a strict match — but if the title clearly names a
-    *different* known product category than the one we're searching for
-    (e.g. we asked for a "laptop" and got back a photo captioned
-    "smartwatch"), that's a strong, cheap signal it's the wrong image, so we
-    drop it rather than risk showing something misleading."""
-    title_l = (title or "").lower().strip()
-    if not title_l:
-        return True  # no alt text to judge by — don't over-block on nothing
-    our_category = _generic_category_query(product_name)
-    if not our_category:
-        return True  # nothing to compare against, let it through
-    for keyword, category_term in CATEGORY_KEYWORDS:
-        if keyword.strip() in f" {title_l} " and category_term != our_category:
-            return False
-    return True
-
-
-def fetch_product_images(product_name):
-    """Return a small gallery of real photos of `product_name` from multiple
-    angles/contexts so the shopper can 'spin' the product in the UI. Every
-    candidate is passed through a relevance guard first — if a photo looks
-    like it's the wrong kind of product, it's skipped rather than shown."""
-    product_name = (product_name or "").strip()
-    if not product_name:
-        return []
-
-    gallery = []
-    seen_urls = set()
-
-    for angle in IMAGE_ANGLES:
-        results = _search_images(f"{product_name} {angle['suffix']}", count=2)
-        for r in results:
-            if not r["url"] or r["url"] in seen_urls:
-                continue
-            if not _image_is_relevant(r.get("title"), product_name):
-                continue
-            seen_urls.add(r["url"])
-            gallery.append({
-                "angle": angle["label"],
-                "image": r["url"],
-                "thumbnail": r["thumbnail"],
-                "title": r["title"] or product_name,
-                "source": r["landing_url"],
-                "credit": r["credit"],
-                "provider": r["provider"],
-            })
-            break  # one image per angle is enough for the spin viewer
-
-    # Fallback: a broader plain search if angle-specific queries came up dry.
-    if not gallery:
-        for r in _search_images(product_name, count=6):
-            if not r["url"] or r["url"] in seen_urls:
-                continue
-            if not _image_is_relevant(r.get("title"), product_name):
-                continue
-            seen_urls.add(r["url"])
-            gallery.append({
-                "angle": "Gallery",
-                "image": r["url"],
-                "thumbnail": r["thumbnail"],
-                "title": r["title"] or product_name,
-                "source": r["landing_url"],
-                "credit": r["credit"],
-                "provider": r["provider"],
-            })
-            if len(gallery) >= 6:
-                break
-
-    # Last resort: a generic category photo (e.g. "gaming laptop") so the
-    # shopper sees *something* representative rather than a blank gallery.
-    # Always labeled clearly so it's never mistaken for the exact model/SKU.
-    if not gallery:
-        generic_term = _generic_category_query(product_name)
-        if generic_term:
-            for r in _search_images(generic_term, count=3):
-                if not r["url"] or r["url"] in seen_urls:
-                    continue
-                seen_urls.add(r["url"])
-                gallery.append({
-                    "angle": "Representative",
-                    "image": r["url"],
-                    "thumbnail": r["thumbnail"],
-                    "title": f"Representative {generic_term} photo (not the exact model)",
-                    "source": r["landing_url"],
-                    "credit": r["credit"],
-                    "provider": r["provider"],
-                    "generic": True,
-                })
-                if len(gallery) >= 3:
-                    break
-
-    return gallery
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +461,8 @@ class User(db.Model):
     reset_token = db.Column(db.String(128), nullable=True, index=True)
     reset_token_expiry = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    country = db.Column(db.String(80), nullable=False, default=DEFAULT_COUNTRY, server_default=DEFAULT_COUNTRY)
+    currency = db.Column(db.String(8), nullable=False, default=DEFAULT_CURRENCY, server_default=DEFAULT_CURRENCY)
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +568,27 @@ def profile_picture_url(user):
 with app.app_context():
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
     db.create_all()
-    
+
+    # db.create_all() only creates tables that don't exist yet — it never adds
+    # a new column to a table that's already there. Since `country`/`currency`
+    # were added to an existing `user` table, patch them in directly for any
+    # database created before this change.
+    try:
+        from sqlalchemy import text as _sqltext
+        with db.engine.connect() as _conn:
+            _cols = {row[1] if db.engine.dialect.name == "sqlite" else row[0]
+                     for row in _conn.execute(_sqltext(
+                         "SELECT * FROM information_schema.columns WHERE table_name='user'"
+                         if db.engine.dialect.name != "sqlite" else "PRAGMA table_info(user)"
+                     ))}
+            if "country" not in _cols:
+                _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN country VARCHAR(80) DEFAULT '{DEFAULT_COUNTRY}'"))
+            if "currency" not in _cols:
+                _conn.execute(_sqltext(f"ALTER TABLE \"user\" ADD COLUMN currency VARCHAR(8) DEFAULT '{DEFAULT_CURRENCY}'"))
+            _conn.commit()
+    except Exception as _mig_exc:
+        app.logger.warning(f"Skipped country/currency column migration check: {_mig_exc}")
+
     # Add demo account if it doesn't exist
     demo_email = "demo@gmail.com"
     if not User.query.filter_by(email=demo_email).first():
@@ -1207,25 +1014,33 @@ def dashboard():
         first_name=first_name,
         lens_configured=bool(PRISM_API_KEY),
         profile_picture_url=profile_picture_url(user),
+        currency_options=CURRENCY_OPTIONS,
+        country_options=COUNTRY_OPTIONS,
     )
 
 
 @app.route("/api/profile/update", methods=["POST"])
 @login_required
 def api_profile_update():
-    """Let a shopper edit their name, shopping interests, and profile photo
-    straight from Settings — no separate page reload needed."""
+    """Let a shopper edit their name, shopping interests, profile photo, and
+    account currency/country straight from Settings — no page reload needed."""
     user = User.query.get(session["user_id"])
     if not user:
         return jsonify({"error": "Session expired — please log in again."}), 401
 
     full_name = (request.form.get("full_name") or "").strip()
     interests = (request.form.get("interests") or "").strip()
+    country = (request.form.get("country") or "").strip()
+    currency = (request.form.get("currency") or "").strip()
 
     if full_name:
         user.full_name = full_name
         session["user_name"] = full_name
     user.interests = interests or None
+    if country and country in COUNTRY_CURRENCY_MAP:
+        user.country = country
+    if currency:
+        user.currency = normalize_currency(currency)
 
     uploaded_file = request.files.get("profile_picture")
     if uploaded_file and uploaded_file.filename:
@@ -1242,9 +1057,12 @@ def api_profile_update():
         "full_name": user.full_name,
         "email": user.email,
         "interests": user.interests or "",
+        "country": user.country,
+        "currency": user.currency,
         "first_name": (user.full_name or "there").split(" ")[0],
         "profile_picture_url": profile_picture_url(user),
     })
+
 
 
 # ---------------------------------------------------------------------------
@@ -1682,9 +1500,16 @@ def api_ai_chat_stream():
 @app.route("/api/fx/usd-ngn")
 @login_required
 def api_fx_usd_ngn():
-    """Live USD -> NGN rate, fetched (and cached) from a free FX API — used by
-    the dashboard to show a trustworthy rate instead of one the AI guesses."""
-    return jsonify({"rate": get_usd_to_ngn_rate(), "pair": "USD/NGN"})
+    """Live USD -> account-currency rate, fetched (and cached) from a free FX
+    API — used by the dashboard to show a trustworthy rate instead of one the
+    AI guesses, and kept fixed to the shopper's chosen Settings currency."""
+    currency = account_currency()
+    return jsonify({
+        "rate": get_usd_rate_for(currency),
+        "currency": currency,
+        "symbol": _CURRENCY_SYMBOLS.get(currency, ""),
+        "pair": f"USD/{currency}",
+    })
 
 
 @app.route("/api/ai/search", methods=["POST"])
@@ -1696,22 +1521,26 @@ def api_ai_search():
     if not query:
         return jsonify({"error": "A search query is required."}), 400
 
+    currency = account_currency()
+    symbol = _CURRENCY_SYMBOLS.get(currency, "")
+
     prompt = f"""A shopper searched: "{query}"
 
 Respond with ONLY JSON matching this exact shape, no markdown fences:
 {{
   "interpretation": "one sentence describing what you understood the shopper wants",
-  "verdict": "2-3 sentence buying verdict / advice",
+  "verdict": "2-3 sentence buying verdict / advice — be direct, not hedged, about what you actually know",
   "picks": [
-    {{"name": "product name", "price_estimate": "e.g. \\u20a6450,000 - \\u20a6520,000", "tag": "Best Overall | Best Value | Best Long-Term | Premium Pick", "why": "1-2 sentence reasoning", "pros": ["..","..)"], "cons": ["..",".."]}}
+    {{"name": "product name", "price_estimate": "e.g. {symbol}450,000 - {symbol}520,000", "tag": "Best Overall | Best Value | Best Long-Term | Premium Pick", "why": "1-2 sentence reasoning", "pros": ["..","..)"], "cons": ["..",".."]}}
   ]
 }}
-Provide exactly 3 picks, realistic and specific to the query (real-world plausible models/specs), tailored to Nigerian market pricing in Naira if relevant, otherwise a sensible currency."""
+Provide exactly 3 picks, realistic and specific to the query (real-world plausible models/specs).
+Every price_estimate MUST be in {currency} ({symbol}) — do not use any other currency."""
 
     try:
         data = lens_generate_json(
             [{"role": "user", "parts": [{"text": prompt}]}],
-            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"], currency=currency),
         )
         data = enrich_picks(data)
         return jsonify(data)
@@ -1726,26 +1555,31 @@ def api_ai_recommend():
     body = request.get_json(force=True, silent=True) or {}
     need = (body.get("need") or "").strip()
     budget = (body.get("budget") or "").strip()
-    currency = (body.get("currency") or "NGN").strip()
+    currency = account_currency()  # fixed per-account currency, not per-request
     if not need:
         return jsonify({"error": "Tell Prism what you're shopping for."}), 400
 
     prompt = f"""Shopper need: "{need}"
 Budget: {budget or 'not specified'} {currency}
 
+If this budget is unrealistic for the need described, say so plainly in "summary" instead of
+forcing 3 picks that don't actually fit — explain what it would realistically take, or what
+real tradeoff (older/refurbished/smaller/different category) actually fits this budget.
+
 Return ONLY JSON, no markdown fences:
 {{
-  "summary": "2 sentence framing of the recommendation",
+  "summary": "2 sentence framing of the recommendation — direct and honest, including any budget mismatch",
   "picks": [
     {{"rank": 1, "name": "..", "price": "..", "tag": "Best Overall", "performance": "short note", "battery": "short note", "value": "short note", "long_term": "short note", "why": "2 sentence reasoning"}},
     {{"rank": 2, "name": "..", "price": "..", "tag": "Best Value", "performance": "..", "battery": "..", "value": "..", "long_term": "..", "why": ".."}},
     {{"rank": 3, "name": "..", "price": "..", "tag": "Best Long-Term", "performance": "..", "battery": "..", "value": "..", "long_term": "..", "why": ".."}}
   ]
-}}"""
+}}
+Every "price" MUST be in {currency} — do not use any other currency."""
     try:
         data = lens_generate_json(
             [{"role": "user", "parts": [{"text": prompt}]}],
-            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"]),
+            system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"], currency=currency),
         )
         data = enrich_picks(data)
         return jsonify(data)
@@ -1889,23 +1723,38 @@ def api_ai_vision():
     else:
         instruction = "Identify the product shown in this image in detail."
 
+    currency = account_currency()
+    symbol = _CURRENCY_SYMBOLS.get(currency, "")
+
     prompt = f"""{instruction}
 
-Be honest about uncertainty: if the image is blurry, cropped, at a bad angle, or you simply
-can't tell the exact model, say so in "summary" and lower "confidence" instead of inventing a
-specific-sounding answer. Only report barcode digits you can actually read clearly — if none
-are legible, return an empty string rather than guessing digits.
+STRICT HONESTY RULES — follow these exactly, this scan is used for real purchase decisions:
+1. If the image does not clearly show an identifiable, purchasable product (e.g. it's blurry,
+   a random scene, a person, text/document, or anything you can't confidently tie to a real
+   product category), say that plainly in "summary", set "confidence" to "low", and leave
+   "product_name" as a general description rather than inventing a specific model.
+2. Never invent a spec, brand, or feature you cannot actually see or reasonably infer from what
+   IS visible — an empty specs list is correct if you have nothing solid to report.
+3. "estimated_price" must be a realistic {currency} price band for the item as you've identified
+   it — do not give a random or generic number disconnected from the actual product/category, and
+   do not pad the range so wide it becomes meaningless. If you truly can't estimate a price (e.g.
+   the product is unidentifiable), return an empty string rather than a guess.
+4. Only report barcode digits you can actually read clearly — if none are legible, return an
+   empty string rather than guessing digits.
+5. Match "confidence" honestly to how sure you actually are — most real-world photos (angle,
+   lighting, cropping) warrant "medium" at best; reserve "high" for genuinely clear, unambiguous
+   shots of a well-known product.
 
 Return ONLY JSON, no markdown fences:
 {{
   "product_name": "your best identification, or a general description if you're not sure of the exact model",
-  "brand": "..",
+  "brand": "brand name if visible/inferable, else empty string",
   "category": "..",
-  "estimated_price": "e.g. \\u20a6250,000 - \\u20a6300,000",
+  "estimated_price": "e.g. {symbol}250,000 - {symbol}300,000 (in {currency}), or empty string if you cannot estimate",
   "barcode_digits": "digits if clearly legible, else empty string",
   "confidence": "high | medium | low — how sure you are this identification is correct",
-  "specs": ["short spec", "short spec", "short spec"],
-  "summary": "2-3 sentence description of what's in the image and its condition/notable traits; mention if the photo made identification hard",
+  "specs": ["only specs you can actually see or confidently infer — omit if none"],
+  "summary": "2-3 sentence description of what's in the image and its condition/notable traits; mention plainly if the photo made identification hard or impossible",
   "recommendations": ["short buying tip", "short buying tip"],
   "alternatives": ["alternative product name", "alternative product name"]
 }}"""
@@ -1918,8 +1767,8 @@ Return ONLY JSON, no markdown fences:
         ],
     }]
     try:
-        data = lens_generate_json(contents, system_instruction=build_system_prompt(),
-                                     model=GROQ_VISION_MODEL, temperature=0.4)
+        data = lens_generate_json(contents, system_instruction=build_system_prompt(currency=currency),
+                                     model=GROQ_VISION_MODEL, temperature=0.3)
         data = enrich_single(data, "product_name")
         return jsonify(data)
     except Exception as exc:
@@ -1955,23 +1804,6 @@ Return ONLY JSON, no markdown fences:
         return jsonify(data)
     except Exception as exc:
         return _lens_error_response(exc)
-
-
-@app.route("/api/ai/product-images", methods=["POST"])
-@login_required
-def api_ai_product_images():
-    """Return a small multi-angle photo gallery for a named product, so the
-    shopper can 'spin' and inspect it visually before Prism even talks pricing."""
-    body = request.get_json(force=True, silent=True) or {}
-    name = (body.get("name") or "").strip()
-    if not name:
-        return jsonify({"error": "A product name is required."}), 400
-    gallery = fetch_product_images(name)
-    return jsonify({
-        "query": name,
-        "images": gallery,
-        "marketplace_links": marketplace_links(name),
-    })
 
 
 @app.route("/api/memory/profile")
@@ -2065,7 +1897,7 @@ def api_ai_shopping_agent():
     body = request.get_json(force=True, silent=True) or {}
     need = (body.get("need") or "").strip()
     budget = (body.get("budget") or "").strip()
-    currency = (body.get("currency") or "NGN").strip()
+    currency = account_currency()  # fixed per-account currency, not per-request
     if not need:
         return jsonify({"error": "Tell Prism what to go find."}), 400
 
@@ -2107,7 +1939,7 @@ def api_ai_budget_planner():
     typical component list, leaving a realistic remainder."""
     body = request.get_json(force=True, silent=True) or {}
     budget = (body.get("budget") or "").strip()
-    currency = (body.get("currency") or "NGN").strip()
+    currency = account_currency()  # fixed per-account currency, not per-request
     goal = (body.get("goal") or "").strip()
     if not budget or not goal:
         return jsonify({"error": "Tell Prism the goal and the total budget."}), 400
@@ -2286,7 +2118,7 @@ def api_ai_resale_predictor():
     body = request.get_json(force=True, silent=True) or {}
     product = (body.get("product") or "").strip()
     buy_price = (body.get("buy_price") or "").strip()
-    currency = (body.get("currency") or "NGN").strip()
+    currency = account_currency()  # fixed per-account currency, not per-request
     if not product:
         return jsonify({"error": "Which product should Prism predict resale value for?"}), 400
 
@@ -2465,7 +2297,7 @@ def api_ai_copilot():
     body = request.get_json(force=True, silent=True) or {}
     situation = (body.get("situation") or "").strip()
     budget = (body.get("budget") or "").strip()
-    currency = (body.get("currency") or "NGN").strip()
+    currency = account_currency()  # fixed per-account currency, not per-request
     if not situation:
         return jsonify({"error": "Describe the situation you're shopping for."}), 400
 

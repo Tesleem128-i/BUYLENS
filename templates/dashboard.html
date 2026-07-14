@@ -18,7 +18,9 @@
   "firstName": {{ first_name|tojson }},
   "email": {{ (user.email or "")|tojson }},
   "interests": {{ (user.interests or "")|tojson }},
-  "profilePictureUrl": {{ (profile_picture_url or "")|tojson }}
+  "profilePictureUrl": {{ (profile_picture_url or "")|tojson }},
+  "currency": {{ (user.currency or "NGN")|tojson }},
+  "country": {{ (user.country or "Nigeria")|tojson }}
 }
 </script>
 
@@ -219,9 +221,12 @@
       <!-- ---------- AI ASSISTANT ---------- -->
       <section class="view" id="view-assistant">
         <div class="view-head">
-          <div>
-            <div class="eyebrow-mini">AI Shopping Assistant</div>
-            <h2>Talk to Prism.</h2>
+          <div class="view-head__title-row">
+            <button type="button" class="assistant-back-btn" id="assistant-back-btn" aria-label="Go back">‹ <span>Back</span></button>
+            <div>
+              <div class="eyebrow-mini">AI Shopping Assistant</div>
+              <h2>Talk to Prism.</h2>
+            </div>
           </div>
           <button class="ghost-btn" id="chat-clear-btn">New chat</button>
         </div>
@@ -402,12 +407,6 @@
           <input type="text" id="rec-need" placeholder="What are you shopping for? e.g. laptop for AI and gaming" required>
           <div class="recommend-form__row">
             <input type="text" id="rec-budget" placeholder="Budget, e.g. 800,000">
-            <select id="rec-currency">
-              <option value="NGN">NGN ₦</option>
-              <option value="USD">USD $</option>
-              <option value="GBP">GBP £</option>
-              <option value="EUR">EUR €</option>
-            </select>
             <button type="submit">Recommend</button>
           </div>
           <p class="fx-hint" id="fx-hint"></p>
@@ -489,10 +488,28 @@
         <div class="glass panel settings-panel">
           <div class="settings-row">
             <div><b>Theme</b><span>Choose how Prism looks.</span></div>
-            <div class="seg" id="theme-seg">
+            <div class="seg seg--themes" id="theme-seg">
               <button class="seg__opt is-active" data-theme="void">Void</button>
               <button class="seg__opt" data-theme="aurora">Aurora</button>
+              <button class="seg__opt" data-theme="ember">Ember</button>
+              <button class="seg__opt" data-theme="frost">Frost</button>
             </div>
+          </div>
+          <div class="settings-row">
+            <div><b>Currency</b><span>Every Prism price &amp; estimate is shown in this currency, using a stable live rate — it won't switch between currencies on you.</span></div>
+            <select id="currency-select">
+              {% for c in currency_options %}
+              <option value="{{ c.code }}" {% if user.currency == c.code %}selected{% endif %}>{{ c.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="settings-row">
+            <div><b>Country</b><span>Used to tailor recommendations to your local market.</span></div>
+            <select id="country-select">
+              {% for c in country_options %}
+              <option value="{{ c }}" {% if user.country == c %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
+            </select>
           </div>
           <div class="settings-row">
             <div><b>Notifications</b><span>Price drop &amp; deal alerts.</span></div>

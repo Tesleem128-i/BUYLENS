@@ -19,6 +19,11 @@
   }
   const userData = readUserData();
 
+  const CURRENCY_SYMBOLS = { NGN: "₦", USD: "$", GBP: "£", EUR: "€", GHS: "₵", KES: "KSh", ZAR: "R", CAD: "$", INR: "₹" };
+  function currencySymbol() {
+    return CURRENCY_SYMBOLS[userData.currency] || "₦";
+  }
+
   function avatarInnerHtml(name, picUrl) {
     if (picUrl) return `<img src="${escapeHtmlAttr(picUrl)}" alt="${escapeHtmlAttr(name || "")}">`;
     return escapeHtml((name || "?")[0] || "?").toUpperCase();
@@ -217,7 +222,17 @@
   const mobileTabItems = $$(".mobile-tabs__item[data-view]");
   const views = $$(".view");
 
+  let previousView = "home";
+  let currentView = "home";
+
   function showView(name) {
+    if (name !== currentView) {
+      // Never treat "assistant" itself as a place to go "back" to — we want
+      // Back to always land on whatever view the shopper was on *before*
+      // they opened the assistant, even if they hop into it more than once.
+      if (currentView !== "assistant") previousView = currentView;
+      currentView = name;
+    }
     railItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
     mobileTabItems.forEach((b) => b.classList.toggle("is-active", b.dataset.view === name));
     views.forEach((v) => v.classList.toggle("is-active", v.id === "view-" + name));
@@ -227,6 +242,7 @@
   }
   railItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
   mobileTabItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+  $("#assistant-back-btn")?.addEventListener("click", () => showView(previousView || "home"));
 
   // stagger index for the drawer's opening animation (section labels count too)
   $$(".rail__nav > *").forEach((el, i) => { el.style.setProperty("--ri", i); });
@@ -291,20 +307,13 @@
   }
 
   /* ================================================================
-     PRODUCT VISUALS — multi-angle gallery ("spin" viewer) + marketplace bar
-     Whenever Prism is about to show a product, it also shows what it looks
-     like from a few angles, and where the shopper could go buy it.
+     MARKETPLACE BAR — every Prism suggestion links out to real
+     marketplaces where the shopper can verify and buy the item.
+     (The product-photo gallery that used to sit here has been removed:
+     the underlying image providers weren't reliably returning real
+     photos, so rather than keep showing broken/blank images, Prism
+     just points shoppers straight to verified marketplace listings.)
      ================================================================ */
-  let __galleryCounter = 0;
-
-  function galleryPlaceholder(query) {
-    if (!query) return "";
-    const gid = "gal_" + (++__galleryCounter) + "_" + Math.random().toString(36).slice(2, 7);
-    return `<div class="pick__gallery" id="${gid}" data-photo-query="${escapeHtml(query)}">
-      <div class="gallery-skel"><span></span><span></span><span></span></div>
-    </div>`;
-  }
-
   function marketBar(links) {
     if (!links || !links.length) return "";
     return `<div class="pick__market">
@@ -315,102 +324,6 @@
         </a>`).join("")}
       </div>
     </div>`;
-  }
-
-  function renderGalleryEmpty(node, query) {
-    node.innerHTML = `<p class="empty-note gallery-empty">No verified photos found for "${escapeHtml(query)}" — double check details on the marketplace links below before buying.</p>`;
-  }
-
-  function imageCreditLine(image) {
-    if (!image) return "";
-    const provider = image.provider || "Web image";
-    const parts = [`via ${provider}`];
-    if (image.credit) parts.push(`by ${image.credit}`);
-    return parts.join(" ");
-  }
-
-  function renderGalleryViewer(node, images, query) {
-    if (!images || !images.length) { renderGalleryEmpty(node, query); return; }
-    node.innerHTML = `
-      <div class="spin-viewer">
-        <button type="button" class="spin-viewer__arrow spin-viewer__arrow--prev" aria-label="Previous angle">‹</button>
-        <div class="spin-viewer__stage">
-          <img class="spin-viewer__img" src="${images[0].thumbnail || images[0].image}" alt="${escapeHtml(images[0].title || query)}">
-          <span class="spin-viewer__angle">${escapeHtml(images[0].angle || "View")}</span>
-          <span class="spin-viewer__hint">↔ drag / click arrows to rotate</span>
-          <button type="button" class="spin-viewer__expand" aria-label="View full size">⤢</button>
-        </div>
-        <button type="button" class="spin-viewer__arrow spin-viewer__arrow--next" aria-label="Next angle">›</button>
-        <div class="spin-viewer__dots">${images.map((_, i) => `<span class="spin-viewer__dot${i === 0 ? " is-active" : ""}"></span>`).join("")}</div>
-      </div>
-      <div class="spin-viewer__credit">${escapeHtml(imageCreditLine(images[0]))}</div>`;
-
-    let idx = 0;
-    let liveImages = images.slice();
-    const img = node.querySelector(".spin-viewer__img");
-    const angleLbl = node.querySelector(".spin-viewer__angle");
-    let dots = $$(".spin-viewer__dot", node);
-    const creditLbl = node.querySelector(".spin-viewer__credit");
-
-    // If a photo fails to actually load (dead link, wrong content), or the
-    // browser flags it as a broken/near-zero-size image, drop it from the
-    // rotation rather than showing a broken-image icon or a bad photo.
-    img.addEventListener("error", () => {
-      liveImages.splice(idx, 1);
-      const dotsWrap = node.querySelector(".spin-viewer__dots");
-      if (dotsWrap) dotsWrap.innerHTML = liveImages.map((_, i) => `<span class="spin-viewer__dot${i === 0 ? " is-active" : ""}"></span>`).join("");
-      dots = $$(".spin-viewer__dot", node);
-      dots.forEach((d, di) => d.addEventListener("click", () => show(di)));
-      if (!liveImages.length) { renderGalleryEmpty(node, query); return; }
-      show(idx % liveImages.length);
-    });
-
-    function show(i) {
-      if (!liveImages.length) return;
-      idx = ((i % liveImages.length) + liveImages.length) % liveImages.length;
-      img.style.opacity = 0;
-      setTimeout(() => {
-        img.src = liveImages[idx].thumbnail || liveImages[idx].image;
-        img.alt = liveImages[idx].title || query;
-        img.style.opacity = 1;
-      }, 90);
-      angleLbl.textContent = liveImages[idx].angle || "View";
-      dots.forEach((d, di) => d.classList.toggle("is-active", di === idx));
-      creditLbl.textContent = imageCreditLine(liveImages[idx]);
-    }
-    node.querySelector(".spin-viewer__arrow--prev").addEventListener("click", () => show(idx - 1));
-    node.querySelector(".spin-viewer__arrow--next").addEventListener("click", () => show(idx + 1));
-    dots.forEach((d, di) => d.addEventListener("click", () => show(di)));
-    node.querySelector(".spin-viewer__expand").addEventListener("click", () => openLightbox(liveImages, idx));
-
-    // simple drag-to-rotate for that "view from any direction" feel
-    let dragStartX = null;
-    const stage = node.querySelector(".spin-viewer__stage");
-    stage.addEventListener("pointerdown", (e) => { dragStartX = e.clientX; });
-    window.addEventListener("pointerup", (e) => {
-      if (dragStartX === null) return;
-      const dx = e.clientX - dragStartX;
-      if (Math.abs(dx) > 40) show(idx + (dx < 0 ? 1 : -1));
-      dragStartX = null;
-    });
-  }
-
-  async function loadGalleryInto(node, query) {
-    try {
-      const data = await postJSON("/api/ai/product-images", { name: query });
-      renderGalleryViewer(node, data.images, query);
-    } catch (err) {
-      renderGalleryEmpty(node, query);
-    }
-  }
-
-  /** Call after inserting HTML built with galleryPlaceholder() into the DOM. */
-  function hydrateGalleries(root) {
-    $$(".pick__gallery[data-photo-query]", root).forEach((node) => {
-      const query = node.dataset.photoQuery;
-      delete node.dataset.photoQuery;
-      loadGalleryInto(node, query);
-    });
   }
 
   /* ================================================================
@@ -565,87 +478,15 @@
   }
 
   /* ================================================================
-     IMAGE LIGHTBOX — tap the magnifier on any product photo to view it
-     full-size, with the same prev/next navigation as the spin viewer.
-     ================================================================ */
-  let lensLightboxEl = null;
-  let lbImages = [];
-  let lbIdx = 0;
-
-  function ensureLightbox() {
-    if (lensLightboxEl) return lensLightboxEl;
-    const el = document.createElement("div");
-    el.className = "lens-lightbox";
-    el.innerHTML = `
-      <div class="lens-lightbox__backdrop"></div>
-      <div class="lens-lightbox__frame">
-        <button type="button" class="lens-lightbox__close" aria-label="Close">✕</button>
-        <button type="button" class="lens-lightbox__arrow lens-lightbox__arrow--prev" aria-label="Previous image">‹</button>
-        <img class="lens-lightbox__img" alt="">
-        <button type="button" class="lens-lightbox__arrow lens-lightbox__arrow--next" aria-label="Next image">›</button>
-        <div class="lens-lightbox__meta">
-          <span class="lens-lightbox__angle"></span>
-          <span class="lens-lightbox__credit"></span>
-        </div>
-        <div class="lens-lightbox__dots"></div>
-      </div>`;
-    document.body.appendChild(el);
-    el.querySelector(".lens-lightbox__backdrop").addEventListener("click", closeLightbox);
-    el.querySelector(".lens-lightbox__close").addEventListener("click", closeLightbox);
-    el.querySelector(".lens-lightbox__arrow--prev").addEventListener("click", () => lbShow(lbIdx - 1));
-    el.querySelector(".lens-lightbox__arrow--next").addEventListener("click", () => lbShow(lbIdx + 1));
-    document.addEventListener("keydown", (e) => {
-      if (!el.classList.contains("is-open")) return;
-      if (e.key === "Escape") closeLightbox();
-      if (e.key === "ArrowLeft") lbShow(lbIdx - 1);
-      if (e.key === "ArrowRight") lbShow(lbIdx + 1);
-    });
-    lensLightboxEl = el;
-    return el;
-  }
-
-  function lbShow(i) {
-    lbIdx = ((i % lbImages.length) + lbImages.length) % lbImages.length;
-    const el = lensLightboxEl;
-    const img = el.querySelector(".lens-lightbox__img");
-    img.style.opacity = 0;
-    setTimeout(() => {
-      img.src = lbImages[lbIdx].image || lbImages[lbIdx].thumbnail;
-      img.alt = lbImages[lbIdx].title || "";
-      img.style.opacity = 1;
-    }, 90);
-    el.querySelector(".lens-lightbox__angle").textContent = lbImages[lbIdx].angle || "";
-    el.querySelector(".lens-lightbox__credit").textContent = imageCreditLine(lbImages[lbIdx]);
-    $$(".lens-lightbox__dots span", el).forEach((d, di) => d.classList.toggle("is-active", di === lbIdx));
-  }
-
-  function openLightbox(images, startIdx) {
-    if (!images || !images.length) return;
-    const el = ensureLightbox();
-    lbImages = images;
-    el.querySelector(".lens-lightbox__dots").innerHTML = images.map((_, i) => `<span></span>`).join("");
-    $$(".lens-lightbox__dots span", el).forEach((d, di) => d.addEventListener("click", () => lbShow(di)));
-    el.classList.add("is-open");
-    document.body.style.overflow = "hidden";
-    lbShow(startIdx || 0);
-  }
-
-  function closeLightbox() {
-    if (!lensLightboxEl) return;
-    lensLightboxEl.classList.remove("is-open");
-    document.body.style.overflow = "";
-  }
-
-  /* ================================================================
      HOME
      ================================================================ */
   function renderStats() {
     const s = state.stats;
-    $("#stat-saved").textContent = "₦" + (s.saved || 0).toLocaleString();
+    $("#stat-saved").textContent = currencySymbol() + (s.saved || 0).toLocaleString();
     $("#stat-searches").textContent = s.searches || 0;
     $("#stat-wishlist").textContent = state.wishlist.length;
     $("#stat-alerts").textContent = state.alerts.length;
-    $("#an-saved").textContent = "₦" + (s.saved || 0).toLocaleString();
+    $("#an-saved").textContent = currencySymbol() + (s.saved || 0).toLocaleString();
     $("#an-searches").textContent = s.searches || 0;
     $("#an-accepted").textContent = s.accepted || 0;
     const topCat = Object.entries(s.categories || {}).sort((a, b) => b[1] - a[1])[0];
@@ -865,13 +706,11 @@
 
   function pickCard(p, sourceLabel) {
     const id = "p_" + Math.random().toString(36).slice(2, 9);
-    const imageQuery = p.image_query || p.name || "";
     const inner = `
       <div class="pick">
         <span class="pick__tag">${escapeHtml(p.tag || "Pick")}</span>
         <span class="pick__name">${escapeHtml(p.name || "")}</span>
         <span class="pick__price">${escapeHtml(p.price_estimate || p.price || "")}</span>
-        ${galleryPlaceholder(imageQuery)}
         <p class="pick__why">${escapeHtml(p.why || "")}</p>
         ${p.pros || p.cons ? `<div class="pick__lists">
           <div class="pos"><b>Pros</b><ul>${(p.pros || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
@@ -894,7 +733,6 @@
         <div class="result-card__verdict">${escapeHtml(data.verdict || "")}</div>
         <div class="pick-grid">${(data.picks || []).map((p) => pickCard(p)).join("")}</div>
       </div>`;
-    hydrateGalleries(searchResults);
     initPacks(searchResults);
   }
 
@@ -1026,7 +864,6 @@
   }
 
   function renderVisionResult(d) {
-    const imageQuery = d.image_query || d.product_name || "";
     const confidence = (d.confidence || "").toLowerCase();
     const confidenceNote = confidence === "low"
       ? `<p class="pick__verify pick__verify--low">⚠ Prism isn't confident about this one (low confidence) — the photo may be unclear. Treat this as a rough guess and verify carefully before buying.</p>`
@@ -1038,7 +875,6 @@
         <div class="vision-card__row"><span>Category</span><b>${escapeHtml(d.category || "—")}</b></div>
         <div class="vision-card__row"><span>Estimated Price</span><b>${escapeHtml(d.estimated_price || "—")}</b></div>
         ${d.barcode_digits ? `<div class="vision-card__row"><span>Barcode</span><b>${escapeHtml(d.barcode_digits)}</b></div>` : ""}
-        ${galleryPlaceholder(imageQuery)}
         <p class="panel__body">${escapeHtml(d.summary || "")}</p>
         <div class="vision-card__specs">${(d.specs || []).map((s) => `<span class="tag-pill">${escapeHtml(s)}</span>`).join("")}</div>
         ${marketBar(d.marketplace_links)}
@@ -1049,7 +885,6 @@
     scanResultPanel.innerHTML = `
       <div class="panel__head"><h3>Analysis</h3><span class="eyebrow-mini">Prism Vision</span></div>
       ${wrapPack(inner, "Vision Match")}`;
-    hydrateGalleries(scanResultPanel);
     initPacks(scanResultPanel);
     $("#scan-to-wishlist")?.addEventListener("click", (e) => addToWishlist(e.target.dataset.name, e.target.dataset.price));
   }
@@ -1078,11 +913,9 @@
         <div class="pick-grid">${data.products.map((name) => wrapPack(`
           <div class="pick pick--compare">
             <span class="pick__name">${escapeHtml(name)}</span>
-            ${galleryPlaceholder(name)}
             ${marketBar(productLinks[name])}
           </div>`, name)).join("")}</div>
         <p class="pick__verify">⚠ Specs above are Prism's best estimate — confirm exact configuration and price on the marketplace links before buying.</p>`;
-      hydrateGalleries(out);
       initPacks(out);
       maybeAward("First comparison");
     } catch (err) {
@@ -1093,27 +926,27 @@
   /* ================================================================
      RECOMMENDATIONS
      ================================================================ */
-  (async function loadFxHint() {
+  async function loadFxHint() {
     const hint = $("#fx-hint");
     if (!hint || !PRISM_ON) return;
     try {
       const data = await (await fetch("/api/fx/usd-ngn")).json();
-      if (data && data.rate) hint.textContent = `Live rate: $1 ≈ ₦${Number(data.rate).toLocaleString()}`;
+      if (data && data.rate) hint.textContent = `Live rate: $1 ≈ ${data.symbol || currencySymbol()}${Number(data.rate).toLocaleString()} ${data.currency || userData.currency || "NGN"}`;
     } catch { /* silent — non-critical */ }
-  })();
+  }
+  loadFxHint();
 
   $("#recommend-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const need = $("#rec-need").value.trim();
     const budget = $("#rec-budget").value.trim();
-    const currency = $("#rec-currency").value;
     const out = $("#recommend-results");
     out.innerHTML = `<div class="glass panel"><p class="empty-note">Prism is ranking options…</p></div>`;
     logHistory("recommend", need);
     bumpCategory(guessCategory(need));
     if (!PRISM_ON) { out.innerHTML = `<div class="glass panel"><p class="empty-note">⚠️ Prism is offline — set GROQ_API_KEY.</p></div>`; return; }
     try {
-      const data = await postJSON("/api/ai/recommend", { need, budget, currency });
+      const data = await postJSON("/api/ai/recommend", { need, budget });
       out.innerHTML = `
         <div class="glass result-card">
           <div class="result-card__verdict">${escapeHtml(data.summary || "")}</div>
@@ -1122,7 +955,6 @@
               <span class="pick__tag">${escapeHtml(p.tag || ("Rank " + p.rank))}</span>
               <span class="pick__name">${escapeHtml(p.name || "")}</span>
               <span class="pick__price">${escapeHtml(p.price || "")}</span>
-              ${galleryPlaceholder(p.image_query || p.name || "")}
               <p class="pick__why">${escapeHtml(p.why || "")}</p>
               <div class="pick__lists">
                 <div><b>Performance</b><p style="color:var(--ink-dim)">${escapeHtml(p.performance || "")}</p></div>
@@ -1138,7 +970,6 @@
               </div>
             </div>`, p.tag || ("Rank " + p.rank))).join("")}</div>
         </div>`;
-      hydrateGalleries(out);
       initPacks(out);
       maybeAward("First AI recommendation");
     } catch (err) {
@@ -1323,7 +1154,7 @@
      PROFILE
      ================================================================ */
   function renderProfile() {
-    $("#pf-saved").textContent = "₦" + (state.stats.saved || 0).toLocaleString();
+    $("#pf-saved").textContent = currencySymbol() + (state.stats.saved || 0).toLocaleString();
     $("#pf-searched").textContent = state.stats.searches || 0;
     const topCat = Object.entries(state.stats.categories || {}).sort((a, b) => b[1] - a[1])[0];
     $("#pf-category").textContent = topCat ? topCat[0] : "—";
@@ -1418,18 +1249,42 @@
   /* ================================================================
      SETTINGS
      ================================================================ */
+  const THEME_CLASSES = ["theme-aurora", "theme-ember", "theme-frost"];
+  function applyTheme(theme) {
+    THEME_CLASSES.forEach((c) => document.body.classList.remove(c));
+    if (theme && theme !== "void") document.body.classList.add(`theme-${theme}`);
+    $$("#theme-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b.dataset.theme === theme));
+  }
   $$("#theme-seg .seg__opt").forEach((btn) => btn.addEventListener("click", () => {
-    $$("#theme-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b === btn));
-    document.body.classList.toggle("theme-aurora", btn.dataset.theme === "aurora");
+    applyTheme(btn.dataset.theme);
     Store.set("theme", btn.dataset.theme);
   }));
   (function initTheme() {
-    const t = Store.get("theme", "void");
-    if (t === "aurora") {
-      document.body.classList.add("theme-aurora");
-      $$("#theme-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b.dataset.theme === "aurora"));
-    }
+    applyTheme(Store.get("theme", "void"));
   })();
+
+  /* ---------------- currency / country (Settings) ---------------- */
+  const currencySelect = $("#currency-select");
+  const countrySelect = $("#country-select");
+  async function saveLocaleSetting(field, value) {
+    const fd = new FormData();
+    fd.append(field, value);
+    try {
+      const res = await fetch("/api/profile/update", { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Couldn't save that setting.");
+      if (data.currency) userData.currency = data.currency;
+      if (data.country) userData.country = data.country;
+      renderStats();
+      renderProfile();
+      loadFxHint();
+      toast(field === "currency" ? "Currency updated." : "Country updated.");
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    }
+  }
+  currencySelect?.addEventListener("change", () => saveLocaleSetting("currency", currencySelect.value));
+  countrySelect?.addEventListener("change", () => saveLocaleSetting("country", countrySelect.value));
 
   $("#delete-account-btn").addEventListener("click", async () => {
     if (!confirm("This will permanently clear your saved Prism data (wishlist, history, alerts, achievements, stats). Continue?")) return;

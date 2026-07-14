@@ -137,6 +137,15 @@
 .eyebrow-mini{ font-family:var(--mono); font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--cyan); opacity:.85; }
 .view-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin-bottom:26px; flex-wrap:wrap; }
 .view-head h2{ font-family:var(--display); font-size:clamp(1.6rem, 3vw, 2.2rem); margin-top:6px; letter-spacing:-.01em; }
+.view-head__title-row{ display:flex; align-items:center; gap:12px; }
+.assistant-back-btn{
+  display:inline-flex; align-items:center; gap:4px; flex:none;
+  background:var(--glass); border:1px solid var(--glass-brd); color:var(--ink);
+  font-family:var(--body); font-size:14px; font-weight:600; cursor:pointer;
+  padding:9px 14px 9px 10px; border-radius:100px; transition:all .2s ease;
+}
+.assistant-back-btn:hover{ border-color:rgba(76,224,255,.4); color:var(--cyan); }
+.assistant-back-btn:active{ transform:scale(.94); }
 
 .ghost-btn, .danger-btn{
   font-family:var(--mono); font-size:12px; letter-spacing:.06em;
@@ -312,6 +321,7 @@
 
 /* ---------- SCANNER ---------- */
 .seg{ display:flex; gap:4px; background:var(--glass); border:1px solid var(--glass-brd); border-radius:100px; padding:4px; }
+.seg--themes{ flex-wrap:wrap; border-radius:16px; }
 .seg__opt{ padding:8px 16px; border-radius:100px; border:none; background:none; color:var(--ink-dim); font-size:12.5px; cursor:pointer; transition:all .25s ease; }
 .seg__opt.is-active{ background:linear-gradient(90deg, var(--cyan), var(--violet)); color:var(--void); font-weight:700; }
 
@@ -579,10 +589,30 @@
   /* bigger, easier taps everywhere on mobile */
   .ghost-btn, .market-pill, .chip{ min-height:38px; }
   .trend-list li{ font-size:13.5px; }
+
+  /* ---------- AI Assistant — fit the phone screen like a native chat app ---------- */
+  #view-assistant{ padding:0; margin:-24px -18px -112px; height:calc(100dvh - 0px); display:flex; flex-direction:column; }
+  #view-assistant .view-head{
+    margin-bottom:0; padding:14px 16px; gap:10px;
+    background:rgba(10,14,24,.6); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--glass-brd); position:sticky; top:0; z-index:5;
+  }
+  #view-assistant .view-head__title-row{ gap:10px; }
+  #view-assistant .eyebrow-mini{ display:none; } /* keep the mobile header compact */
+  #view-assistant h2{ font-size:1.15rem; margin-top:0; }
+  #view-assistant #chat-clear-btn{ font-size:12px; padding:8px 12px; min-height:34px; }
+  .assistant-back-btn{ padding:9px 12px; font-size:14px; }
+
+  .chat{ flex:1; height:auto; min-height:0; border-radius:0; border-left:none; border-right:none; }
+  .chat__log{ padding:16px 14px calc(16px + env(safe-area-inset-bottom)); }
+  .chat__msg{ max-width:88%; }
+  .chat__form{ padding:12px 12px calc(12px + env(safe-area-inset-bottom)); position:sticky; bottom:0; background:rgba(10,14,24,.55); backdrop-filter:blur(14px); }
 }
 
-/* ---------- aurora theme variant ---------- */
+/* ---------- theme variants ---------- */
 body.theme-aurora{ --void:#0a0518; --navy:#160b2e; --cyan:#7CF7D8; --violet:#FF8FE0; }
+body.theme-ember{ --void:#160604; --navy:#2b0f08; --cyan:#FFB86B; --violet:#FF5C5C; }
+body.theme-frost{ --void:#04101a; --navy:#0b2233; --cyan:#8FE3FF; --violet:#6FB7FF; }
 
 /* ============================================================
    PRISM VISUAL INTELLIGENCE — product photo "spin" viewer,
