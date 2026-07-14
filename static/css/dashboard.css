@@ -591,7 +591,7 @@
   .trend-list li{ font-size:13.5px; }
 
   /* ---------- AI Assistant — fit the phone screen like a native chat app ---------- */
-  #view-assistant{ padding:0; margin:-24px -18px -112px; height:calc(100dvh - 0px); display:flex; flex-direction:column; }
+  #view-assistant.is-active{ padding:0; margin:-24px -18px -112px; height:calc(100dvh - 0px); display:flex; flex-direction:column; }
   #view-assistant .view-head{
     margin-bottom:0; padding:14px 16px; gap:10px;
     background:rgba(10,14,24,.6); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
