@@ -367,6 +367,7 @@
         <span class="pick__live-label"><span class="live-dot"></span>Live prices</span>
         ${prices.map((row) => `
           <a class="live-price-row" href="${row.link || "#"}" target="_blank" rel="noopener noreferrer">
+            ${row.thumbnail ? `<img class="live-price-row__thumb" src="${row.thumbnail}" alt="" loading="lazy" onerror="this.remove()">` : ""}
             <span class="live-price-row__store">${escapeHtml(row.store)}</span>
             <span class="live-price-row__price">${escapeHtml(row.price)}</span>
           </a>`).join("")}

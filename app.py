@@ -190,6 +190,21 @@ GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scou
 # Single boolean flag the app / dashboard consult to know whether "Prism" is online.
 PRISM_API_KEY = GROQ_API_KEY
 
+# --- SerpApi (Google Shopping — real prices from Amazon/Walmart/Best Buy/etc) -
+# Phase 1 of real pricing: a shopping-search aggregator instead of scraping
+# every retailer ourselves. Free key + sign-up: https://serpapi.com
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+SERPAPI_URL = "https://serpapi.com/search.json"
+
+# Only surface offers from stores a shopper would recognize and trust —
+# anything else Google Shopping returns (random third-party sellers) is
+# dropped rather than shown as if we vouch for it.
+LIVE_PRICE_RETAILERS = ["Amazon", "Walmart", "Best Buy", "Target", "eBay"]
+
+# Real prices move, but not so often that every request needs a fresh paid
+# SerpApi call — repeat searches within this window are served from cache.
+LIVE_PRICE_CACHE_TTL_SECONDS = 6 * 60 * 60
+
 PRISM_SYSTEM_PROMPT_BASE = (
     "You are Prism, the AI shopping intelligence platform. Speak with calm, specific "
     "confidence — never generic. Ground every answer in the exact product/category mentioned. "
@@ -704,6 +719,106 @@ class FeatureEvent(db.Model):
     def to_dict(self):
         return {"saved": self.saved or 0, "searches": self.searches or 0,
                 "accepted": self.accepted or 0, "categories": self.categories}
+
+
+class LivePriceCache(db.Model):
+    """Cached Google-Shopping results for a normalized product query, so
+    identical searches across users don't each cost a fresh paid SerpApi
+    call. This is a brand-new table, so plain db.create_all() below picks
+    it up automatically — no manual ALTER TABLE migration needed."""
+    id = db.Column(db.Integer, primary_key=True)
+    query_key = db.Column(db.String(300), nullable=False, unique=True, index=True)
+    results_json = db.Column(db.Text, nullable=False)
+    fetched_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+
+def _normalize_price_query(product):
+    return re.sub(r"\s+", " ", (product or "").strip().lower())
+
+
+def _fetch_serpapi_shopping(product):
+    """Calls SerpApi's Google Shopping engine. Returns a list of
+    {store, price_usd, link, thumbnail} dicts, one best (cheapest) offer
+    per trusted retailer — never more than one row per store, and only
+    from LIVE_PRICE_RETAILERS. `thumbnail` is a real product photo from
+    that listing, included at no extra cost since it's already part of
+    the Shopping response we're paying for anyway. Raises on any
+    request/parsing failure so the caller can fall back to cache or a
+    clear error."""
+    if not SERPAPI_KEY:
+        raise RuntimeError("SERPAPI_KEY is not configured on the server.")
+    resp = requests.get(SERPAPI_URL, params={
+        "engine": "google_shopping",
+        "q": product,
+        "api_key": SERPAPI_KEY,
+        "gl": "us",
+        "hl": "en",
+    }, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+
+    best_per_store = {}
+    for item in (data.get("shopping_results") or []):
+        source = (item.get("source") or "").strip()
+        matched = next((r for r in LIVE_PRICE_RETAILERS if r.lower() in source.lower()), None)
+        price_usd = item.get("extracted_price")
+        if not matched or price_usd is None:
+            continue
+        price_usd = float(price_usd)
+        if matched not in best_per_store or price_usd < best_per_store[matched]["price_usd"]:
+            best_per_store[matched] = {
+                "store": matched,
+                "price_usd": price_usd,
+                "link": item.get("product_link") or item.get("link"),
+                "thumbnail": item.get("thumbnail"),
+            }
+    return list(best_per_store.values())
+
+
+def get_live_prices(product, currency):
+    """Real prices for `product` from Amazon/Walmart/Best Buy/Target/eBay,
+    converted into the account's currency. Returns (results, error) — on
+    any failure, falls back to a stale cached copy if one exists rather
+    than showing nothing. results is always a plain list (possibly empty),
+    never None."""
+    key = _normalize_price_query(product)
+    if not key:
+        return [], "No product given."
+
+    cached = LivePriceCache.query.filter_by(query_key=key).first()
+    fresh = cached and (datetime.utcnow() - cached.fetched_at).total_seconds() < LIVE_PRICE_CACHE_TTL_SECONDS
+
+    if fresh:
+        raw = json.loads(cached.results_json)
+    else:
+        try:
+            raw = _fetch_serpapi_shopping(product)
+        except Exception as exc:
+            app.logger.warning(f"Live price lookup failed for '{product}': {exc}")
+            if cached:
+                raw = json.loads(cached.results_json)  # serve stale rather than nothing
+            else:
+                return [], "Live prices are temporarily unavailable — try again shortly."
+        else:
+            if cached:
+                cached.results_json = json.dumps(raw)
+                cached.fetched_at = datetime.utcnow()
+            else:
+                db.session.add(LivePriceCache(query_key=key, results_json=json.dumps(raw)))
+            db.session.commit()
+
+    currency = normalize_currency(currency)
+    symbol = _CURRENCY_SYMBOLS.get(currency, "")
+    rate = 1.0 if currency == "USD" else get_usd_rate_for(currency)
+    out = [{
+        "store": r["store"],
+        "price": f"{symbol}{r['price_usd'] * rate:,.2f}",
+        "price_value": round(r["price_usd"] * rate, 2),
+        "link": r["link"],
+        "thumbnail": r.get("thumbnail"),
+    } for r in raw]
+    out.sort(key=lambda x: x["price_value"])
+    return out, None
 
 
 def get_or_create_stats(user_id):
@@ -2121,6 +2236,29 @@ Every price_estimate MUST be in {currency} ({symbol}) — do not use any other c
         return jsonify(data)
     except Exception as exc:
         return _lens_error_response(exc)
+
+
+@app.route("/api/ai/live-prices", methods=["POST"])
+@limiter.limit("20 per minute")
+@login_required
+def api_live_prices():
+    """Phase 1 of real pricing: actual current prices for a named product
+    from Amazon/Walmart/Best Buy/Target/eBay via a Google Shopping
+    aggregator (SerpApi) — not an AI estimate. Called on-demand for one
+    product at a time (e.g. a 'Check live prices' button on a specific
+    pick) rather than automatically for every AI response, since each
+    fresh lookup costs a real API call."""
+    body = request.get_json(force=True, silent=True) or {}
+    product = (body.get("product") or "").strip()
+    if not product:
+        return jsonify({"error": "Which product should Prism check live prices for?"}), 400
+
+    currency = account_currency()
+    results, error = get_live_prices(product, currency)
+    if error and not results:
+        return jsonify({"error": error}), 502
+
+    return jsonify({"product": product, "currency": currency, "prices": results})
 
 
 @app.route("/api/ai/recommend", methods=["POST"])

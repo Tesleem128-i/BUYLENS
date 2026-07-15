@@ -750,7 +750,11 @@ body.theme-frost{ --void:#04101a; --navy:#0b2233; --cyan:#8FE3FF; --violet:#6FB7
   background:rgba(255,255,255,.03); border:1px solid var(--glass-brd); transition:all .2s ease;
 }
 .live-price-row:hover{ border-color:rgba(76,224,255,.4); background:rgba(76,224,255,.08); }
-.live-price-row__store{ font-size:12.5px; font-weight:600; }
+.live-price-row__thumb{
+  width:28px; height:28px; border-radius:6px; object-fit:contain; background:rgba(255,255,255,.9);
+  flex-shrink:0;
+}
+.live-price-row__store{ font-size:12.5px; font-weight:600; flex:1; }
 .live-price-row__price{ font-family:var(--mono); font-size:12.5px; color:var(--violet); }
 
 
