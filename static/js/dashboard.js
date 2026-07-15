@@ -353,6 +353,46 @@
   }
 
   /* ================================================================
+     LIVE PRICES — on-demand real prices from Amazon/Walmart/Best Buy/
+     Target/eBay (via /api/ai/live-prices), kept visually separate from
+     Prism's AI price_estimate so the two are never confused.
+     ================================================================ */
+  function renderLivePrices(data) {
+    const prices = data.prices || [];
+    if (!prices.length) {
+      return `<p class="pick__live-status">No live listings found for this product right now.</p>`;
+    }
+    return `
+      <div class="pick__live-results">
+        <span class="pick__live-label"><span class="live-dot"></span>Live prices</span>
+        ${prices.map((row) => `
+          <a class="live-price-row" href="${row.link || "#"}" target="_blank" rel="noopener noreferrer">
+            <span class="live-price-row__store">${escapeHtml(row.store)}</span>
+            <span class="live-price-row__price">${escapeHtml(row.price)}</span>
+          </a>`).join("")}
+      </div>`;
+  }
+
+  async function loadLivePrices(btn) {
+    const slot = btn.closest(".pick")?.querySelector("[data-live-slot]");
+    const name = btn.dataset.name;
+    if (!slot || !name) return;
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = "Checking…";
+    slot.innerHTML = `<p class="pick__live-status">Checking live prices…</p>`;
+    try {
+      const data = await postJSON("/api/ai/live-prices", { product: name });
+      slot.innerHTML = renderLivePrices(data);
+    } catch (err) {
+      slot.innerHTML = `<p class="pick__live-status pick__live-status--error">⚠ ${escapeHtml(err.message)}</p>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  }
+
+  /* ================================================================
      PACK CARDS — every Prism suggestion is wrapped in a sealed "pack"
      that opens with a shake + spark-burst + reveal, like opening a
      card pack. Rarity is derived from the pick's own rank/tag, so the
@@ -748,10 +788,12 @@
           <div class="neg"><b>Cons</b><ul>${(p.cons || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>
         </div>` : ""}
         ${marketBar(p.marketplace_links)}
+        <div class="pick__live" data-live-slot></div>
         <p class="pick__verify">⚠ Estimates from Prism — confirm live price &amp; stock on the marketplace before paying.</p>
         <div class="pick__actions">
           <button data-act="wishlist" data-name="${escapeHtml(p.name || "")}" data-price="${escapeHtml(p.price_estimate || p.price || "")}">+ Wishlist</button>
           <button data-act="reviews" data-name="${escapeHtml(p.name || "")}">Reviews</button>
+          <button data-act="live-prices" data-name="${escapeHtml(p.name || "")}">Check Live Prices</button>
         </div>
       </div>`;
     return wrapPack(inner, p.tag);
@@ -772,6 +814,7 @@
     if (!btn) return;
     if (btn.dataset.act === "wishlist") addToWishlist(btn.dataset.name, btn.dataset.price);
     if (btn.dataset.act === "reviews") { showView("assistant"); sendChat(`Summarize reviews for ${btn.dataset.name} — should I buy it?`); }
+    if (btn.dataset.act === "live-prices") loadLivePrices(btn);
   });
 
   searchForm.addEventListener("submit", (e) => { e.preventDefault(); runSearch(searchInput.value.trim()); });
@@ -997,9 +1040,11 @@
                 <div><b>Long-term</b><p style="color:var(--ink-dim)">${escapeHtml(p.long_term || "")}</p></div>
               </div>
               ${marketBar(p.marketplace_links)}
+              <div class="pick__live" data-live-slot></div>
               <p class="pick__verify">⚠ Estimate from Prism — confirm live price &amp; stock before paying.</p>
               <div class="pick__actions">
                 <button data-act="accept" data-name="${escapeHtml(p.name || "")}" data-price="${escapeHtml(p.price || "")}">Accept pick</button>
+                <button data-act="live-prices" data-name="${escapeHtml(p.name || "")}">Check Live Prices</button>
               </div>
             </div>`, p.tag || ("Rank " + p.rank))).join("")}</div>
         </div>`;
@@ -1010,12 +1055,16 @@
     }
   });
   $("#recommend-results").addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-act='accept']");
-    if (!btn) return;
-    addToWishlist(btn.dataset.name, btn.dataset.price);
-    bumpStat("accepted");
-    trackFeature("recommend:accepted");
-    toast("Added to wishlist and counted as an accepted recommendation.");
+    const acceptBtn = e.target.closest("button[data-act='accept']");
+    if (acceptBtn) {
+      addToWishlist(acceptBtn.dataset.name, acceptBtn.dataset.price);
+      bumpStat("accepted");
+      trackFeature("recommend:accepted");
+      toast("Added to wishlist and counted as an accepted recommendation.");
+      return;
+    }
+    const liveBtn = e.target.closest("button[data-act='live-prices']");
+    if (liveBtn) loadLivePrices(liveBtn);
   });
 
   /* ================================================================
