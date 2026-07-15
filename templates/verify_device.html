@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify this device — Prism</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo.png') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+
+<div class="auth-glow"></div>
+<a href="{{ url_for('index') }}" class="auth-back">&larr; Back to Prism</a>
+
+<div class="auth-card">
+  <div class="auth-card__mark">
+    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Prism">
+    <span>PR<b>ISM</b></span>
+  </div>
+
+  <div class="auth-icon">
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 15a3 3 0 003-3V7a3 3 0 10-6 0v5a3 3 0 003 3z" stroke="#4CE0FF" stroke-width="1.6"/>
+      <path d="M19 11v1a7 7 0 01-14 0v-1M12 19v3" stroke="#4CE0FF" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <div class="auth-eyebrow">Security Check</div>
+  <h1 class="auth-title">New device detected.</h1>
+  <p class="auth-sub">
+    We noticed a login attempt from a device or network we don't recognize.
+    For your security, we've sent a 6-digit code to <b>{{ email }}</b> — enter it
+    below to finish signing in.
+  </p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="auth-flash auth-flash--{{ 'error' if category == 'error' else 'info' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form class="auth-verify" method="POST" action="{{ url_for('verify_device') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input
+      type="text"
+      name="code"
+      inputmode="numeric"
+      autocomplete="one-time-code"
+      maxlength="6"
+      placeholder="000000"
+      required
+      autofocus>
+    <button type="submit">Verify &amp; log in</button>
+  </form>
+
+  <div class="auth-resend">
+    <form method="POST" action="{{ url_for('resend_device_code') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Resend code</button>
+    </form>
+  </div>
+
+  <p class="auth-switch">Not you? <a href="{{ url_for('login') }}">Back to log in</a></p>
+</div>
+
+</body>
+</html>

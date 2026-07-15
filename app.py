@@ -621,6 +621,9 @@ class User(db.Model):
     currency = db.Column(db.String(8), nullable=False, default=DEFAULT_CURRENCY, server_default=DEFAULT_CURRENCY)
     failed_login_attempts = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     lockout_until = db.Column(db.DateTime, nullable=True)
+    # --- New-device / new-IP login verification ---
+    device_verification_code = db.Column(db.String(12), nullable=True)
+    device_verification_expiry = db.Column(db.DateTime, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -862,6 +865,8 @@ with app.app_context():
         "currency": f"VARCHAR(8) DEFAULT '{DEFAULT_CURRENCY}'",
         "failed_login_attempts": "INTEGER DEFAULT 0",
         "lockout_until": "TIMESTAMP",
+        "device_verification_code": "VARCHAR(12)",
+        "device_verification_expiry": "TIMESTAMP",
     }
     from sqlalchemy import text as _sqltext
     is_sqlite = db.engine.dialect.name == "sqlite"
@@ -1102,6 +1107,79 @@ def send_reset_email(user, token):
         return False
 
 
+def send_device_verification_email(user, code, ip):
+    """Sent when a login is attempted from an IP address we haven't seen a
+    successful login from before for this account. Same Brevo pipeline as
+    the other transactional emails."""
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
+          PR<span style="color:#4CE0FF;">ISM</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          New sign-in detected
+        </p>
+        <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
+          Hi {user.full_name}, someone just tried to log in to your Prism account from a device
+          or network we don't recognize (IP: {ip or 'unknown'}). Enter the code below to
+          confirm it's you and finish signing in.
+        </p>
+        <div style="display:inline-block;margin-top:24px;padding:16px 28px;border-radius:100px;
+                    background:linear-gradient(90deg,#4CE0FF,#9D6BFF);color:#05070C;font-weight:700;
+                    letter-spacing:0.25em;font-size:24px;">
+          {code}
+        </div>
+        <p style="color:#8B93AE;font-size:12px;margin-top:28px;line-height:1.6;">
+          This code expires in {DEVICE_CODE_EXPIRY_MINUTES} minutes. If this wasn't you, don't share
+          this code with anyone — change your password immediately from a trusted device.
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.full_name}],
+        "subject": "Confirm it's you — new Prism sign-in",
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY or "",
+        "content-type": "application/json",
+    }
+
+    if not BREVO_API_KEY:
+        app.logger.warning(
+            "BREVO_API_KEY is not set — skipping real send. Device verification code: %s", code
+        )
+        return False
+
+    try:
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code in (200, 201):
+            return True
+        app.logger.warning(
+            "Brevo device-verification email HTTP %s: %s", response.status_code, response.text[:500]
+        )
+        return False
+    except requests.RequestException as exc:
+        app.logger.error("Brevo device-verification email send failed: %s", exc)
+        return False
+
+
+def is_known_ip_for_user(user_id, ip):
+    """True if this account has a prior *successful* login recorded from
+    this exact IP address — i.e. this is not a new device/network."""
+    if not ip:
+        return False
+    return db.session.query(
+        LoginEvent.query.filter_by(user_id=user_id, success=True, ip=ip).exists()
+    ).scalar()
+
+
 CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -1330,6 +1408,13 @@ def resend_verification():
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
+# --- New-device / new-IP login verification ---------------------------------
+# If a login attempt succeeds (right email + password) but comes from an IP
+# we've never seen a successful login from for this account, we don't finish
+# logging them in straight away — we email a one-time code to their address
+# on file and require it before the session is created.
+DEVICE_CODE_EXPIRY_MINUTES = 15
+
 
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("15 per minute")
@@ -1365,6 +1450,24 @@ def login():
 
         user.failed_login_attempts = 0
         user.lockout_until = None
+
+        # New device / new IP address for this account -> hold off on
+        # completing the login until they confirm a code sent to their email.
+        if not is_known_ip_for_user(user.id, client_ip):
+            code = generate_verification_code()
+            user.device_verification_code = code
+            user.device_verification_expiry = datetime.utcnow() + timedelta(minutes=DEVICE_CODE_EXPIRY_MINUTES)
+            # Logged as a non-success attempt for now — it only becomes a
+            # "known" successful IP once the code is confirmed below.
+            db.session.add(LoginEvent(user_id=user.id, email=email, success=False, ip=client_ip))
+            db.session.commit()
+            send_device_verification_email(user, code, client_ip)
+
+            session.clear()
+            session["pending_2fa_user_id"] = user.id
+            flash("We don't recognize this device. Enter the code we emailed you to finish logging in.", "info")
+            return redirect(url_for("verify_device"))
+
         db.session.add(LoginEvent(user_id=user.id, email=email, success=True, ip=client_ip))
         db.session.commit()
 
@@ -1374,6 +1477,66 @@ def login():
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
+
+
+@app.route("/verify-device", methods=["GET", "POST"])
+@limiter.limit("15 per hour")
+def verify_device():
+    """Second step of login when the attempt came from an IP address we
+    haven't recorded a successful login from before for this account."""
+    pending_user_id = session.get("pending_2fa_user_id")
+    user = User.query.get(pending_user_id) if pending_user_id else None
+    if not user:
+        flash("Please log in to continue.", "error")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        client_ip = get_remote_address()
+
+        if not code:
+            flash("Please enter the verification code.", "error")
+            return render_template("verify_device.html", email=user.email)
+
+        expired = (
+            not user.device_verification_expiry
+            or user.device_verification_expiry < datetime.utcnow()
+        )
+        if expired or not user.device_verification_code or user.device_verification_code != code:
+            flash("That code is incorrect or has expired.", "error")
+            return render_template("verify_device.html", email=user.email)
+
+        # Correct code -> clear it and complete the login. Recording this
+        # attempt as a *successful* LoginEvent for this IP means future
+        # logins from the same network won't need to go through this again.
+        user.device_verification_code = None
+        user.device_verification_expiry = None
+        user.failed_login_attempts = 0
+        user.lockout_until = None
+        db.session.add(LoginEvent(user_id=user.id, email=user.email, success=True, ip=client_ip))
+        db.session.commit()
+
+        session.clear()
+        session["user_id"] = user.id
+        session["user_name"] = user.full_name
+        return redirect(url_for("dashboard"))
+
+    return render_template("verify_device.html", email=user.email)
+
+
+@app.route("/resend-device-code", methods=["POST"])
+@limiter.limit("6 per hour")
+def resend_device_code():
+    pending_user_id = session.get("pending_2fa_user_id")
+    user = User.query.get(pending_user_id) if pending_user_id else None
+    if user:
+        code = generate_verification_code()
+        user.device_verification_code = code
+        user.device_verification_expiry = datetime.utcnow() + timedelta(minutes=DEVICE_CODE_EXPIRY_MINUTES)
+        db.session.commit()
+        send_device_verification_email(user, code, get_remote_address())
+    flash("If that login attempt is still pending, a new code is on its way.", "info")
+    return redirect(url_for("verify_device"))
 
 
 @app.route("/forgot-password", methods=["GET", "POST"])
