@@ -746,6 +746,16 @@ class LivePriceCache(db.Model):
 SHOP_DESIGNS = {"aurora", "sunset", "mono", "forest"}
 DEFAULT_SHOP_DESIGN = "aurora"
 
+# "Template" = the layout/structure of the storefront (grid vs list vs big
+# gallery cards). "Design" (above) = the color theme. Picking both is what
+# the signup wizard's step 3 (template) and step 4 (design) map to.
+SHOP_TEMPLATES = {"grid", "catalog", "boutique"}
+DEFAULT_SHOP_TEMPLATE = "grid"
+
+# A product's stock badge, settable from the dashboard without deleting it.
+STOCK_STATUSES = {"in_stock", "limited", "sold_out"}
+DEFAULT_STOCK_STATUS = "in_stock"
+
 
 class Shop(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -754,11 +764,15 @@ class Shop(db.Model):
     name = db.Column(db.String(160), nullable=False)
     category = db.Column(db.String(120), nullable=True)
     description = db.Column(db.Text, nullable=True)
-    # Where a buyer's DM should point them (WhatsApp number, Instagram handle,
-    # email, etc.) — free text, shown as-is on the storefront.
+    # Legacy free-text contact (WhatsApp/Instagram/email). No longer required
+    # or shown as the primary way to reach a seller — buyers message through
+    # the in-app chat instead — but kept as an optional extra line sellers
+    # can still fill in if they want to.
     contact = db.Column(db.String(255), nullable=True)
     design = db.Column(db.String(30), nullable=False, default=DEFAULT_SHOP_DESIGN, server_default=DEFAULT_SHOP_DESIGN)
+    template = db.Column(db.String(30), nullable=False, default=DEFAULT_SHOP_TEMPLATE, server_default=DEFAULT_SHOP_TEMPLATE)
     cover_image = db.Column(db.String(500), nullable=True)
+    logo_image = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self, product_count=0):
@@ -769,7 +783,9 @@ class Shop(db.Model):
             "description": self.description or "",
             "contact": self.contact or "",
             "design": self.design if self.design in SHOP_DESIGNS else DEFAULT_SHOP_DESIGN,
+            "template": self.template if self.template in SHOP_TEMPLATES else DEFAULT_SHOP_TEMPLATE,
             "coverImageUrl": stored_image_url(self.cover_image),
+            "logoImageUrl": stored_image_url(self.logo_image),
             "productCount": product_count,
             "storeUrl": url_for("view_store", slug=self.slug),
         }
@@ -782,6 +798,7 @@ class ShopProduct(db.Model):
     price = db.Column(db.String(120), nullable=False, default="—")
     description = db.Column(db.Text, nullable=True)
     photos_json = db.Column(db.Text, nullable=False, default="[]")
+    stock_status = db.Column(db.String(20), nullable=False, default=DEFAULT_STOCK_STATUS, server_default=DEFAULT_STOCK_STATUS)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     @property
@@ -802,31 +819,53 @@ class ShopProduct(db.Model):
             "price": self.price,
             "description": self.description or "",
             "photoUrls": [stored_image_url(p) for p in self.photos if stored_image_url(p)],
+            "stockStatus": self.stock_status if self.stock_status in STOCK_STATUSES else DEFAULT_STOCK_STATUS,
             "createdAt": int(self.created_at.timestamp() * 1000),
         }
 
 
-class ShopInquiry(db.Model):
-    """A buyer 'sliding into the DM' of a seller — since there's no payment
-    or live chat yet, this is the whole transaction: the buyer leaves their
-    name, contact, and a message, and the seller reads it in their own
-    Marketplace tab."""
+class ShopConversation(db.Model):
+    """One running thread between a single buyer and the seller — replaces
+    the old one-shot ShopInquiry 'DM'. A buyer never logs in, so they're
+    recognized by a random token minted on their first message and kept in
+    their browser (localStorage), not by a phone number."""
     id = db.Column(db.Integer, primary_key=True)
     shop_id = db.Column(db.Integer, db.ForeignKey("shop.id"), nullable=False, index=True)
     product_id = db.Column(db.String(40), db.ForeignKey("shop_product.id"), nullable=True, index=True)
     product_name = db.Column(db.String(200), nullable=True)
     buyer_name = db.Column(db.String(160), nullable=False)
-    buyer_contact = db.Column(db.String(255), nullable=True)
-    message = db.Column(db.Text, nullable=False)
+    buyer_token = db.Column(db.String(64), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    last_message_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    seller_unread = db.Column(db.Integer, nullable=False, default=0)
+    buyer_unread = db.Column(db.Integer, nullable=False, default=0)
+
+    def to_dict(self, last_message=None):
+        return {
+            "id": self.id,
+            "productName": self.product_name or "",
+            "buyerName": self.buyer_name,
+            "lastMessage": last_message.to_dict() if last_message else None,
+            "lastMessageAt": int(self.last_message_at.timestamp() * 1000),
+            "sellerUnread": self.seller_unread or 0,
+            "buyerUnread": self.buyer_unread or 0,
+        }
+
+
+class ShopMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("shop_conversation.id"), nullable=False, index=True)
+    sender = db.Column(db.String(10), nullable=False)  # "buyer" | "seller"
+    body = db.Column(db.Text, nullable=True)
+    image = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     def to_dict(self):
         return {
             "id": self.id,
-            "productName": self.product_name or "",
-            "buyerName": self.buyer_name,
-            "buyerContact": self.buyer_contact or "",
-            "message": self.message,
+            "sender": self.sender,
+            "body": self.body or "",
+            "imageUrl": stored_image_url(self.image) if self.image else None,
             "createdAt": int(self.created_at.timestamp() * 1000),
         }
 
@@ -1080,6 +1119,28 @@ with app.app_context():
                 _conn.commit()
         except Exception as _mig_exc:
             app.logger.warning(f"Skipped migration for user.{_col}: {_mig_exc}")
+
+    # Same story for `shop` and `shop_product` — logo_image/template were
+    # added alongside cover_image/design, and stock_status was added after
+    # products already existed in the wild.
+    _new_shop_columns = {
+        "logo_image": "VARCHAR(500)",
+        "template": f"VARCHAR(30) DEFAULT '{DEFAULT_SHOP_TEMPLATE}'",
+    }
+    for _table, _cols in (("shop", _new_shop_columns), ("shop_product", {"stock_status": f"VARCHAR(20) DEFAULT '{DEFAULT_STOCK_STATUS}'"})):
+        for _col, _decl in _cols.items():
+            try:
+                with db.engine.connect() as _conn:
+                    if is_sqlite:
+                        existing = {row[1] for row in _conn.execute(_sqltext(f"PRAGMA table_info({_table})"))}
+                        if _col in existing:
+                            continue
+                        _conn.execute(_sqltext(f"ALTER TABLE \"{_table}\" ADD COLUMN {_col} {_decl}"))
+                    else:
+                        _conn.execute(_sqltext(f"ALTER TABLE \"{_table}\" ADD COLUMN IF NOT EXISTS {_col} {_decl}"))
+                    _conn.commit()
+            except Exception as _mig_exc:
+                app.logger.warning(f"Skipped migration for {_table}.{_col}: {_mig_exc}")
 
     # Add demo account if it doesn't exist
     demo_email = "demo@gmail.com"
@@ -3525,13 +3586,17 @@ def _shop_for_current_user():
 def api_shop_mine():
     shop = _shop_for_current_user()
     if not shop:
-        return jsonify({"shop": None, "products": [], "inquiries": []})
+        return jsonify({"shop": None, "products": [], "conversations": []})
     products = ShopProduct.query.filter_by(shop_id=shop.id).order_by(ShopProduct.created_at.desc()).all()
-    inquiries = ShopInquiry.query.filter_by(shop_id=shop.id).order_by(ShopInquiry.created_at.desc()).limit(100).all()
+    convos = ShopConversation.query.filter_by(shop_id=shop.id).order_by(ShopConversation.last_message_at.desc()).limit(100).all()
+    convo_list = []
+    for c in convos:
+        last = ShopMessage.query.filter_by(conversation_id=c.id).order_by(ShopMessage.created_at.desc()).first()
+        convo_list.append(c.to_dict(last))
     return jsonify({
         "shop": shop.to_dict(product_count=len(products)),
         "products": [p.to_dict() for p in products],
-        "inquiries": [q.to_dict() for q in inquiries],
+        "conversations": convo_list,
     })
 
 
@@ -3550,6 +3615,9 @@ def api_shop_signup():
     design = (request.form.get("design") or DEFAULT_SHOP_DESIGN).strip()
     if design not in SHOP_DESIGNS:
         design = DEFAULT_SHOP_DESIGN
+    template = (request.form.get("template") or DEFAULT_SHOP_TEMPLATE).strip()
+    if template not in SHOP_TEMPLATES:
+        template = DEFAULT_SHOP_TEMPLATE
 
     if not name:
         return jsonify({"error": "Give your store a name."}), 400
@@ -3567,6 +3635,7 @@ def api_shop_signup():
     shop.description = description or None
     shop.contact = contact or None
     shop.design = design
+    shop.template = template
 
     cover_file = request.files.get("cover_image")
     if cover_file and cover_file.filename:
@@ -3574,6 +3643,13 @@ def api_shop_signup():
         if upload_error:
             return jsonify({"error": upload_error}), 400
         shop.cover_image = saved_path
+
+    logo_file = request.files.get("logo_image")
+    if logo_file and logo_file.filename:
+        saved_path, upload_error = save_uploaded_shop_image(logo_file)
+        if upload_error:
+            return jsonify({"error": upload_error}), 400
+        shop.logo_image = saved_path
 
     db.session.commit()
     return jsonify({"shop": shop.to_dict(product_count=ShopProduct.query.filter_by(shop_id=shop.id).count()), "created": is_new})
@@ -3607,6 +3683,35 @@ def api_shop_product_add():
     )
     product.photos = saved_paths
     db.session.add(product)
+    db.session.commit()
+    return jsonify(product.to_dict())
+
+
+@app.route("/api/shop/products/<product_id>", methods=["PATCH"])
+@login_required
+def api_shop_product_update(product_id):
+    """Used from the dashboard's per-product menu to flag 'Limited stock' /
+    'Sold out' / back to 'In stock' without deleting and re-adding the item."""
+    shop = _shop_for_current_user()
+    if not shop:
+        return jsonify({"error": "No store found."}), 404
+    product = ShopProduct.query.filter_by(id=product_id, shop_id=shop.id).first()
+    if not product:
+        return jsonify({"error": "Product not found."}), 404
+
+    body = request.get_json(force=True, silent=True) or {}
+    if "stock_status" in body:
+        status = (body.get("stock_status") or "").strip()
+        if status not in STOCK_STATUSES:
+            return jsonify({"error": "That's not a valid stock status."}), 400
+        product.stock_status = status
+    if "name" in body and (body.get("name") or "").strip():
+        product.name = body["name"].strip()[:200]
+    if "price" in body and (body.get("price") or "").strip():
+        product.price = body["price"].strip()[:120]
+    if "description" in body:
+        product.description = (body.get("description") or "").strip() or None
+
     db.session.commit()
     return jsonify(product.to_dict())
 
@@ -3663,34 +3768,151 @@ def view_store(slug):
     )
 
 
-@app.route("/api/shop/<slug>/inquire", methods=["POST"])
-@limiter.limit("10 per minute")
-def api_shop_inquire(slug):
-    """A buyer 'sliding into the DM'. Public endpoint — a shopper doesn't
-    need a Prism account to message a seller from their storefront page."""
+def _save_chat_image_if_present():
+    """Shared by every chat-send route. Returns (path_or_None, error_or_None)."""
+    image_file = request.files.get("image")
+    if not image_file or not image_file.filename:
+        return None, None
+    return save_uploaded_shop_image(image_file, max_bytes=MAX_SCAN_IMAGE_BYTES)
+
+
+# --- Buyer side: no login required, identity is a random token kept in the
+# buyer's browser (localStorage) instead of a phone number ------------------
+@app.route("/api/shop/<slug>/chat/start", methods=["POST"])
+@limiter.limit("15 per minute")
+def api_shop_chat_start(slug):
+    """First message of a new conversation. Mints a buyer_token the client
+    stores locally and sends back on every future visit to keep seeing the
+    same thread — no account, no phone number, no WhatsApp handoff needed."""
     shop = Shop.query.filter_by(slug=slug).first()
     if not shop:
         return jsonify({"error": "That store doesn't exist."}), 404
 
-    body = request.get_json(force=True, silent=True) or {}
-    buyer_name = (body.get("name") or "").strip()
-    buyer_contact = (body.get("contact") or "").strip()
-    message = (body.get("message") or "").strip()
-    product_id = (body.get("product_id") or "").strip() or None
-    product_name = (body.get("product_name") or "").strip() or None
+    name = (request.form.get("name") or "").strip()
+    message = (request.form.get("message") or "").strip()
+    product_id = (request.form.get("product_id") or "").strip() or None
+    product_name = (request.form.get("product_name") or "").strip() or None
 
-    if not buyer_name or not message:
-        return jsonify({"error": "Add your name and a short message for the seller."}), 400
+    if not name:
+        return jsonify({"error": "Add your name so the seller knows who's messaging."}), 400
+    if len(name) > 160:
+        return jsonify({"error": "That name is a bit long."}), 400
     if len(message) > 2000:
         return jsonify({"error": "That message is a bit long — keep it under 2000 characters."}), 400
 
-    inquiry = ShopInquiry(
+    image_path, upload_error = _save_chat_image_if_present()
+    if upload_error:
+        return jsonify({"error": upload_error}), 400
+    if not message and not image_path:
+        return jsonify({"error": "Write a message or attach a photo."}), 400
+
+    convo = ShopConversation(
         shop_id=shop.id, product_id=product_id, product_name=product_name,
-        buyer_name=buyer_name[:160], buyer_contact=buyer_contact[:255] or None, message=message,
+        buyer_name=name, buyer_token=secrets.token_hex(20), seller_unread=1,
     )
-    db.session.add(inquiry)
+    db.session.add(convo)
+    db.session.flush()
+    msg = ShopMessage(conversation_id=convo.id, sender="buyer", body=message or None, image=image_path)
+    db.session.add(msg)
     db.session.commit()
-    return jsonify({"ok": True})
+    return jsonify({"buyerToken": convo.buyer_token, "conversation": convo.to_dict(msg), "messages": [msg.to_dict()]})
+
+
+@app.route("/api/shop/<slug>/chat/<buyer_token>")
+def api_shop_chat_thread(slug, buyer_token):
+    """A buyer re-opening the store page polls this with their saved token
+    to load message history and any reply the seller sent."""
+    shop = Shop.query.filter_by(slug=slug).first()
+    if not shop:
+        return jsonify({"error": "That store doesn't exist."}), 404
+    convo = ShopConversation.query.filter_by(shop_id=shop.id, buyer_token=buyer_token).first()
+    if not convo:
+        return jsonify({"error": "Conversation not found."}), 404
+    convo.buyer_unread = 0
+    db.session.commit()
+    messages = ShopMessage.query.filter_by(conversation_id=convo.id).order_by(ShopMessage.created_at.asc()).all()
+    return jsonify({"conversation": convo.to_dict(), "messages": [m.to_dict() for m in messages]})
+
+
+@app.route("/api/shop/<slug>/chat/<buyer_token>/messages", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_shop_chat_buyer_send(slug, buyer_token):
+    shop = Shop.query.filter_by(slug=slug).first()
+    if not shop:
+        return jsonify({"error": "That store doesn't exist."}), 404
+    convo = ShopConversation.query.filter_by(shop_id=shop.id, buyer_token=buyer_token).first()
+    if not convo:
+        return jsonify({"error": "Conversation not found."}), 404
+
+    message = (request.form.get("message") or "").strip()
+    if len(message) > 2000:
+        return jsonify({"error": "That message is a bit long — keep it under 2000 characters."}), 400
+    image_path, upload_error = _save_chat_image_if_present()
+    if upload_error:
+        return jsonify({"error": upload_error}), 400
+    if not message and not image_path:
+        return jsonify({"error": "Write a message or attach a photo."}), 400
+
+    msg = ShopMessage(conversation_id=convo.id, sender="buyer", body=message or None, image=image_path)
+    db.session.add(msg)
+    convo.last_message_at = datetime.utcnow()
+    convo.seller_unread = (convo.seller_unread or 0) + 1
+    db.session.commit()
+    return jsonify(msg.to_dict())
+
+
+# --- Seller side: authenticated, lives in the dashboard's Marketplace tab --
+@app.route("/api/shop/conversations")
+@login_required
+def api_shop_conversations():
+    shop = _shop_for_current_user()
+    if not shop:
+        return jsonify({"conversations": []})
+    convos = ShopConversation.query.filter_by(shop_id=shop.id).order_by(ShopConversation.last_message_at.desc()).all()
+    out = []
+    for c in convos:
+        last = ShopMessage.query.filter_by(conversation_id=c.id).order_by(ShopMessage.created_at.desc()).first()
+        out.append(c.to_dict(last))
+    return jsonify({"conversations": out})
+
+
+@app.route("/api/shop/conversations/<int:convo_id>/messages")
+@login_required
+def api_shop_conversation_messages(convo_id):
+    shop = _shop_for_current_user()
+    convo = ShopConversation.query.filter_by(id=convo_id, shop_id=shop.id if shop else -1).first()
+    if not convo:
+        return jsonify({"error": "Conversation not found."}), 404
+    convo.seller_unread = 0
+    db.session.commit()
+    messages = ShopMessage.query.filter_by(conversation_id=convo.id).order_by(ShopMessage.created_at.asc()).all()
+    return jsonify({"conversation": convo.to_dict(), "messages": [m.to_dict() for m in messages]})
+
+
+@app.route("/api/shop/conversations/<int:convo_id>/messages", methods=["POST"])
+@login_required
+@limiter.limit("30 per minute")
+def api_shop_conversation_reply(convo_id):
+    shop = _shop_for_current_user()
+    convo = ShopConversation.query.filter_by(id=convo_id, shop_id=shop.id if shop else -1).first()
+    if not convo:
+        return jsonify({"error": "Conversation not found."}), 404
+
+    message = (request.form.get("message") or "").strip()
+    if len(message) > 2000:
+        return jsonify({"error": "That message is a bit long — keep it under 2000 characters."}), 400
+    image_path, upload_error = _save_chat_image_if_present()
+    if upload_error:
+        return jsonify({"error": upload_error}), 400
+    if not message and not image_path:
+        return jsonify({"error": "Write a message or attach a photo."}), 400
+
+    msg = ShopMessage(conversation_id=convo.id, sender="seller", body=message or None, image=image_path)
+    db.session.add(msg)
+    convo.last_message_at = datetime.utcnow()
+    convo.buyer_unread = (convo.buyer_unread or 0) + 1
+    db.session.commit()
+    return jsonify(msg.to_dict())
 
 
 if __name__ == "__main__":

@@ -1260,11 +1260,74 @@ body.theme-frost{ --void:#04101a; --navy:#0b2233; --cyan:#8FE3FF; --violet:#6FB7
 .mkt-product-card__price{ font-family:var(--mono); color:var(--violet); font-size:13px; }
 .mkt-product-card__remove{ align-self:flex-start; margin-top:4px; }
 
-.mkt-inquiry-item{ display:flex; flex-direction:column; gap:4px; padding:14px 18px; background:var(--glass); border:1px solid var(--glass-brd); border-radius:14px; font-size:13.5px; }
-.mkt-inquiry-item__head{ display:flex; justify-content:space-between; gap:10px; }
+.mkt-inquiry-item{ display:flex; flex-direction:column; gap:4px; padding:14px 18px; background:var(--glass); border:1px solid var(--glass-brd); border-radius:14px; font-size:13.5px; cursor:pointer; transition:border-color .15s; }
+.mkt-inquiry-item:hover{ border-color:rgba(76,224,255,.35); }
+.mkt-inquiry-item__head{ display:flex; justify-content:space-between; gap:10px; align-items:center; }
 .mkt-inquiry-item__head b{ font-family:var(--display); }
 .mkt-inquiry-item__meta{ font-size:11.5px; color:var(--ink-dim); }
 .mkt-inquiry-item__msg{ font-size:13px; color:var(--ink-dim); line-height:1.5; }
+.mkt-inquiry-item__unread{
+  font-family:var(--mono); font-size:10.5px; padding:2px 8px; border-radius:100px; flex:none;
+  background:linear-gradient(90deg, var(--cyan), var(--violet)); color:#020409; font-weight:700;
+}
+
+/* ---------- store setup wizard (steps: info -> logo -> template -> design -> review) ---------- */
+.mkt-wizard__steps{ display:flex; gap:6px; margin:-4px 0 16px; }
+.mkt-wizard__steps span{
+  flex:1; height:4px; border-radius:100px; background:var(--glass-brd); transition:background .2s;
+}
+.mkt-wizard__steps span.is-done{ background:linear-gradient(90deg, var(--cyan), var(--violet)); }
+.mkt-wizard__step{ display:none; flex-direction:column; gap:12px; }
+.mkt-wizard__step.is-active{ display:flex; }
+.mkt-wizard__nav{ display:flex; justify-content:space-between; gap:10px; margin-top:4px; }
+.mkt-wizard__nav .ghost-btn[hidden]{ display:none; }
+
+.mkt-template-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; }
+.mkt-template-opt{
+  border:1px solid var(--glass-brd); border-radius:14px; padding:12px 10px; cursor:pointer; background:rgba(255,255,255,.02);
+  display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; transition:border-color .15s, background .15s;
+}
+.mkt-template-opt.is-active{ border-color:var(--cyan); background:rgba(76,224,255,.08); }
+.mkt-template-opt__preview{ width:100%; height:52px; border-radius:8px; background:var(--glass); position:relative; overflow:hidden; }
+.mkt-template-opt__preview span{ position:absolute; background:rgba(255,255,255,.14); border-radius:3px; }
+.mkt-template-opt span.label{ position:static; background:none; font-size:11.5px; font-weight:600; }
+
+.mkt-logo-pick{
+  width:88px; height:88px; border-radius:20px; margin:0 auto; cursor:pointer; overflow:hidden;
+  border:1px dashed var(--glass-brd); display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:var(--cyan); text-align:center; background:rgba(76,224,255,.04);
+}
+.mkt-logo-pick img{ width:100%; height:100%; object-fit:cover; }
+
+.mkt-product-card__stock{
+  position:absolute; top:8px; left:8px; font-family:var(--mono); font-size:10px; padding:3px 9px; border-radius:100px; color:#fff;
+}
+.mkt-product-card__stock--limited{ background:rgba(200,140,0,.85); }
+.mkt-product-card__stock--sold_out{ background:rgba(180,40,40,.85); }
+.mkt-product-card__actions{ display:flex; gap:6px; flex-wrap:wrap; padding:0 18px 16px; }
+.mkt-product-card__actions select{
+  background:rgba(255,255,255,.03); border:1px solid var(--glass-brd); border-radius:100px; color:var(--ink);
+  font-size:11.5px; padding:6px 10px; font-family:var(--body);
+}
+
+/* ---------- seller chat panel (in dashboard, replies to buyer messages) ---------- */
+.mkt-chat-panel{ display:flex; flex-direction:column; height:min(70vh, 560px); width:min(480px, 100%); padding:0 !important; gap:0 !important; }
+.mkt-chat-panel__body{ flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
+.mkt-chat-msg{ max-width:82%; padding:9px 13px; border-radius:14px; font-size:13px; line-height:1.42; }
+.mkt-chat-msg img{ max-width:100%; border-radius:10px; display:block; margin-top:6px; }
+.mkt-chat-msg--seller{ align-self:flex-end; background:linear-gradient(90deg, var(--cyan), var(--violet)); color:#020409; border-bottom-right-radius:4px; }
+.mkt-chat-msg--buyer{ align-self:flex-start; background:var(--glass); color:var(--ink); border-bottom-left-radius:4px; }
+.mkt-chat-panel__composer{ display:flex; align-items:flex-end; gap:8px; padding:14px 18px; border-top:1px solid var(--glass-brd); }
+.mkt-chat-panel__composer textarea{
+  flex:1; resize:none; max-height:90px; background:rgba(255,255,255,.03); border:1px solid var(--glass-brd);
+  border-radius:14px; padding:10px 13px; color:var(--ink); font-size:13.5px; outline:none; font-family:var(--body);
+}
+.mkt-chat-panel__composer button{
+  flex:none; width:38px; height:38px; border-radius:100px; border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-size:15px;
+}
+.mkt-chat-panel__img-btn{ background:rgba(255,255,255,.05); color:var(--ink-dim); }
+.mkt-chat-panel__send{ background:linear-gradient(90deg, var(--cyan), var(--violet)); color:#020409; }
 
 /* generic modal frame, shared style with the camera-capture modal */
 .shop-modal{ position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:20px; }

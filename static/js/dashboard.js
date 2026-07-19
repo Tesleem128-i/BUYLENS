@@ -94,6 +94,16 @@
     if (!res.ok) throw new Error(data.error || "Request failed.");
     return data;
   }
+  async function patchJSON(url, body) {
+    const res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Request failed.");
+    return data;
+  }
 
   /** Load everything from the database. Called once on boot; paints from
    *  the cached snapshot immediately, then reconciles with the server. */
@@ -1855,7 +1865,11 @@
      shareable mini-site at /store/<slug>. No payment yet — the whole
      flow ends at a buyer DM the seller reads back here.
      ================================================================ */
-  const mktState = { shop: null, products: [], inquiries: [], design: "aurora", editing: false };
+  const mktState = {
+    shop: null, products: [], conversations: [], design: "aurora", template: "grid",
+    editing: false, wizardStep: 1, activeConvoId: null, chatPollTimer: null,
+  };
+  const STOCK_LABELS = { in_stock: "In stock", limited: "Limited stock", sold_out: "Sold out" };
 
   async function postForm(url, formData, method = "POST") {
     const res = await fetch(url, { method, body: formData, headers: { "X-CSRFToken": csrfToken() } });
@@ -1916,7 +1930,7 @@
       const data = await getJSON("/api/shop/mine");
       mktState.shop = data.shop;
       mktState.products = data.products || [];
-      mktState.inquiries = data.inquiries || [];
+      mktState.conversations = data.conversations || [];
       renderMarketplaceMine();
     } catch (err) {
       /* keep whatever was last rendered */
@@ -1937,7 +1951,7 @@
     if (cover) cover.style.backgroundImage = shop.coverImageUrl ? `url('${shop.coverImageUrl}')` : "";
 
     renderMarketplaceProducts();
-    renderMarketplaceInquiries();
+    renderMarketplaceConversations();
   }
   function renderMarketplaceProducts() {
     const grid = $("#mkt-products-grid");
@@ -1950,12 +1964,20 @@
       <div class="glass mkt-product-card">
         <div class="mkt-product-card__photo" style="${p.photoUrls[0] ? `background-image:url('${escapeHtmlAttr(p.photoUrls[0])}')` : ""}">
           ${!p.photoUrls.length ? "No photo" : ""}
+          ${p.stockStatus && p.stockStatus !== "in_stock" ? `<span class="mkt-product-card__stock mkt-product-card__stock--${p.stockStatus}">${STOCK_LABELS[p.stockStatus]}</span>` : ""}
           ${p.photoUrls.length > 1 ? `<span class="mkt-product-card__count">${p.photoUrls.length} photos</span>` : ""}
         </div>
         <div class="mkt-product-card__body">
           <span class="mkt-product-card__name">${escapeHtml(p.name)}</span>
           <span class="mkt-product-card__price">${escapeHtml(p.price)}</span>
-          <button class="ghost-btn mkt-product-card__remove" data-remove-product="${p.id}">Remove</button>
+        </div>
+        <div class="mkt-product-card__actions">
+          <select data-stock-select="${p.id}">
+            <option value="in_stock" ${p.stockStatus === "in_stock" ? "selected" : ""}>In stock</option>
+            <option value="limited" ${p.stockStatus === "limited" ? "selected" : ""}>Limited stock</option>
+            <option value="sold_out" ${p.stockStatus === "sold_out" ? "selected" : ""}>Sold out</option>
+          </select>
+          <button class="ghost-btn mkt-product-card__remove" data-remove-product="${p.id}">Delete</button>
         </div>
       </div>
     `).join("");
@@ -1975,31 +1997,162 @@
       btn.disabled = false;
     }
   });
-  function renderMarketplaceInquiries() {
+  $("#mkt-products-grid")?.addEventListener("change", async (e) => {
+    const sel = e.target.closest("select[data-stock-select]");
+    if (!sel) return;
+    const id = sel.dataset.stockSelect;
+    const status = sel.value;
+    sel.disabled = true;
+    try {
+      const product = await patchJSON(`/api/shop/products/${encodeURIComponent(id)}`, { stock_status: status });
+      mktState.products = mktState.products.map((p) => (p.id === id ? product : p));
+      renderMarketplaceProducts();
+      toast(`${product.name}: ${STOCK_LABELS[status]}.`);
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    } finally {
+      sel.disabled = false;
+    }
+  });
+
+  /* ---- buyer chats (conversations) ---- */
+  function renderMarketplaceConversations() {
     const list = $("#mkt-inquiries-list");
     if (!list) return;
-    if (!mktState.inquiries.length) {
-      list.innerHTML = `<p class="empty-note">No buyer messages yet — they'll show up here once someone DMs your store.</p>`;
+    if (!mktState.conversations.length) {
+      list.innerHTML = `<p class="empty-note">No buyer messages yet — they'll show up here once someone chats with your store.</p>`;
       return;
     }
-    list.innerHTML = mktState.inquiries.map((q) => `
-      <div class="mkt-inquiry-item">
+    list.innerHTML = mktState.conversations.map((c) => `
+      <div class="mkt-inquiry-item" data-convo-id="${c.id}">
         <div class="mkt-inquiry-item__head">
-          <b>${escapeHtml(q.buyerName)}</b>
-          <time>${new Date(q.createdAt).toLocaleDateString()}</time>
+          <b>${escapeHtml(c.buyerName)}</b>
+          ${c.sellerUnread ? `<span class="mkt-inquiry-item__unread">${c.sellerUnread} new</span>` : `<time>${new Date(c.lastMessageAt).toLocaleDateString()}</time>`}
         </div>
-        ${q.productName ? `<span class="mkt-inquiry-item__meta">About: ${escapeHtml(q.productName)}</span>` : ""}
-        ${q.buyerContact ? `<span class="mkt-inquiry-item__meta">Contact: ${escapeHtml(q.buyerContact)}</span>` : ""}
-        <p class="mkt-inquiry-item__msg">${escapeHtml(q.message)}</p>
+        ${c.productName ? `<span class="mkt-inquiry-item__meta">About: ${escapeHtml(c.productName)}</span>` : ""}
+        <p class="mkt-inquiry-item__msg">${c.lastMessage ? (c.lastMessage.sender === "seller" ? "You: " : "") + escapeHtml(c.lastMessage.body || (c.lastMessage.imageUrl ? "📷 Photo" : "")) : ""}</p>
       </div>
     `).join("");
   }
+  $("#mkt-inquiries-list")?.addEventListener("click", (e) => {
+    const item = e.target.closest("[data-convo-id]");
+    if (!item) return;
+    openSellerChat(Number(item.dataset.convoId));
+  });
 
-  /* ---- signup / edit form ---- */
+  const mktChatModal = $("#mkt-chat-modal");
+  function stopChatPolling() { if (mktState.chatPollTimer) clearInterval(mktState.chatPollTimer); mktState.chatPollTimer = null; }
+  function renderSellerChatMessages(messages) {
+    const body = $("#mkt-chat-body");
+    if (!body) return;
+    body.innerHTML = messages.map((m) => `
+      <div class="mkt-chat-msg mkt-chat-msg--${m.sender === "seller" ? "seller" : "buyer"}">
+        ${m.body ? `<span>${escapeHtml(m.body)}</span>` : ""}
+        ${m.imageUrl ? `<img src="${m.imageUrl}" alt="">` : ""}
+      </div>
+    `).join("") || `<p class="empty-note">No messages yet.</p>`;
+    body.scrollTop = body.scrollHeight;
+  }
+  async function loadSellerChatThread(silent) {
+    if (!mktState.activeConvoId) return;
+    try {
+      const data = await getJSON(`/api/shop/conversations/${mktState.activeConvoId}/messages`);
+      renderSellerChatMessages(data.messages || []);
+      if (!silent) {
+        const convo = data.conversation;
+        $("#mkt-chat-buyer-name").textContent = convo.buyerName;
+        $("#mkt-chat-product-name").textContent = convo.productName ? `About: ${convo.productName}` : "";
+      }
+      mktState.conversations = mktState.conversations.map((c) => (c.id === mktState.activeConvoId ? { ...c, sellerUnread: 0 } : c));
+      renderMarketplaceConversations();
+    } catch (err) { /* silent — poll retries next interval */ }
+  }
+  function openSellerChat(convoId) {
+    mktState.activeConvoId = convoId;
+    mktChatModal.hidden = false;
+    loadSellerChatThread(false);
+    stopChatPolling();
+    mktState.chatPollTimer = setInterval(() => loadSellerChatThread(true), 4000);
+  }
+  function closeSellerChat() {
+    mktChatModal.hidden = true;
+    mktState.activeConvoId = null;
+    stopChatPolling();
+  }
+  $("#mkt-chat-modal-close")?.addEventListener("click", closeSellerChat);
+  $("#mkt-chat-modal-backdrop")?.addEventListener("click", closeSellerChat);
+
+  let pendingSellerChatImage = null;
+  $("#mkt-chat-img-btn")?.addEventListener("click", () => $("#mkt-chat-img-input")?.click());
+  $("#mkt-chat-img-input")?.addEventListener("change", () => {
+    pendingSellerChatImage = $("#mkt-chat-img-input").files[0] || null;
+    if (pendingSellerChatImage) toast(`Attached ${pendingSellerChatImage.name}`);
+  });
+  async function sendSellerChatMessage() {
+    const input = $("#mkt-chat-input");
+    const text = input.value.trim();
+    if (!text && !pendingSellerChatImage) return;
+    const sendBtn = $("#mkt-chat-send-btn");
+    sendBtn.disabled = true;
+    const fd = new FormData();
+    fd.append("message", text);
+    if (pendingSellerChatImage) fd.append("image", pendingSellerChatImage);
+    try {
+      await postForm(`/api/shop/conversations/${mktState.activeConvoId}/messages`, fd);
+      input.value = "";
+      pendingSellerChatImage = null;
+      $("#mkt-chat-img-input").value = "";
+      await loadSellerChatThread(true);
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    } finally {
+      sendBtn.disabled = false;
+    }
+  }
+  $("#mkt-chat-send-btn")?.addEventListener("click", sendSellerChatMessage);
+  $("#mkt-chat-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendSellerChatMessage(); }
+  });
+
+  /* ---- signup wizard: info -> logo -> template -> design -> review ---- */
+  const WIZARD_STEPS = 5;
   let pendingShopCoverFile = null;
+  let pendingShopLogoFile = null;
+
+  function goToWizardStep(n) {
+    mktState.wizardStep = n;
+    $$(".mkt-wizard__step").forEach((el) => el.classList.toggle("is-active", Number(el.dataset.step) === n));
+    $$("[data-step-dot]").forEach((dot) => dot.classList.toggle("is-done", Number(dot.dataset.stepDot) <= n));
+    $("#mkt-wizard-back").hidden = n === 1;
+    $("#mkt-wizard-next").hidden = n === WIZARD_STEPS;
+    $("#mkt-signup-submit").hidden = n !== WIZARD_STEPS;
+    $("#mkt-wizard-title").textContent = mktState.editing ? "Edit your store" : "Open your store";
+    const subs = {
+      1: "Tell buyers what you sell.",
+      2: "Add your business logo — it shows at the top of your storefront.",
+      3: "Pick how your product listings are laid out.",
+      4: "Pick a color theme for your store.",
+      5: "Almost done — review and go live.",
+    };
+    $("#mkt-wizard-sub").textContent = subs[n];
+  }
+  $("#mkt-wizard-next")?.addEventListener("click", () => {
+    if (mktState.wizardStep === 1 && !$("#mkt-shop-name").value.trim()) {
+      toast("Give your store a name first.");
+      $("#mkt-shop-name").focus();
+      return;
+    }
+    goToWizardStep(Math.min(WIZARD_STEPS, mktState.wizardStep + 1));
+  });
+  $("#mkt-wizard-back")?.addEventListener("click", () => goToWizardStep(Math.max(1, mktState.wizardStep - 1)));
+
   $$("#mkt-design-seg .seg__opt").forEach((btn) => btn.addEventListener("click", () => {
     $$("#mkt-design-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b === btn));
     mktState.design = btn.dataset.design;
+  }));
+  $$("#mkt-template-grid .mkt-template-opt").forEach((opt) => opt.addEventListener("click", () => {
+    $$("#mkt-template-grid .mkt-template-opt").forEach((o) => o.classList.toggle("is-active", o === opt));
+    mktState.template = opt.dataset.template;
   }));
   $("#mkt-cover-input")?.addEventListener("change", () => {
     const file = $("#mkt-cover-input").files[0];
@@ -2007,6 +2160,16 @@
     pendingShopCoverFile = file;
     $("#mkt-cover-preview-label").textContent = `✓ ${file.name}`;
   });
+  $("#mkt-logo-pick-btn")?.addEventListener("click", () => $("#mkt-logo-input")?.click());
+  $("#mkt-logo-input")?.addEventListener("change", () => {
+    const file = $("#mkt-logo-input").files[0];
+    if (!file) return;
+    pendingShopLogoFile = file;
+    const reader = new FileReader();
+    reader.onload = () => { $("#mkt-logo-pick-btn").innerHTML = `<img src="${reader.result}" alt="">`; };
+    reader.readAsDataURL(file);
+  });
+
   $("#mkt-edit-shop-btn")?.addEventListener("click", () => {
     const shop = mktState.shop;
     if (!shop) return;
@@ -2017,17 +2180,21 @@
     $("#mkt-shop-contact").value = shop.contact || "";
     $$("#mkt-design-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b.dataset.design === shop.design));
     mktState.design = shop.design;
+    $$("#mkt-template-grid .mkt-template-opt").forEach((o) => o.classList.toggle("is-active", o.dataset.template === shop.template));
+    mktState.template = shop.template || "grid";
+    if (shop.logoImageUrl) $("#mkt-logo-pick-btn").innerHTML = `<img src="${shop.logoImageUrl}" alt="">`;
     $("#mkt-signup-submit").textContent = "Save changes";
+    goToWizardStep(1);
     renderMarketplaceMine();
   });
   $("#mkt-signup-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("#mkt-shop-name").value.trim();
-    if (!name) return;
+    if (!name) { goToWizardStep(1); return; }
     const btn = $("#mkt-signup-submit");
     btn.disabled = true;
     const wasEditing = mktState.editing;
-    btn.textContent = wasEditing ? "Saving…" : "Opening your store…";
+    btn.textContent = wasEditing ? "Saving…" : "Building your store…";
 
     const fd = new FormData();
     fd.append("name", name);
@@ -2035,15 +2202,20 @@
     fd.append("description", $("#mkt-shop-desc").value.trim());
     fd.append("contact", $("#mkt-shop-contact").value.trim());
     fd.append("design", mktState.design);
+    fd.append("template", mktState.template);
     if (pendingShopCoverFile) fd.append("cover_image", pendingShopCoverFile);
+    if (pendingShopLogoFile) fd.append("logo_image", pendingShopLogoFile);
 
     try {
       const data = await postForm("/api/shop/signup", fd);
       mktState.shop = data.shop;
       mktState.editing = false;
       pendingShopCoverFile = null;
+      pendingShopLogoFile = null;
       $("#mkt-cover-preview-label").textContent = "+ Add a cover photo (optional)";
-      btn.textContent = "Open my store";
+      $("#mkt-logo-pick-btn").innerHTML = `<span>+ Add logo</span>`;
+      btn.textContent = "Build my store";
+      goToWizardStep(1);
       renderMarketplaceMine();
       toast(data.created ? "🎉 Your store is live!" : "Store updated.");
       maybeAward("Opened a Marketplace store");

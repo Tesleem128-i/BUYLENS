@@ -380,21 +380,60 @@
         <!-- SELL -->
         <div class="mkt-pane" id="mkt-pane-sell">
           <div class="glass panel" id="mkt-signup-panel" hidden>
-            <div class="panel__head"><h3>Open your store</h3><span class="eyebrow-mini">Free · no payment needed yet</span></div>
-            <p class="mkt-signup-sub">Tell buyers what you sell, add a few photos, and Prism builds you a mini storefront with its own shareable link.</p>
+            <div class="panel__head"><h3 id="mkt-wizard-title">Open your store</h3><span class="eyebrow-mini">Free · no payment needed yet</span></div>
+            <p class="mkt-signup-sub" id="mkt-wizard-sub">A few quick steps and Prism builds you a mini storefront with its own shareable link.</p>
+
+            <div class="mkt-wizard__steps" id="mkt-wizard-steps">
+              <span data-step-dot="1" class="is-done"></span>
+              <span data-step-dot="2"></span>
+              <span data-step-dot="3"></span>
+              <span data-step-dot="4"></span>
+              <span data-step-dot="5"></span>
+            </div>
+
             <form id="mkt-signup-form" class="mkt-signup-form">
-              <input type="text" id="mkt-shop-name" placeholder="Business / store name" maxlength="160" required>
-              <input type="text" id="mkt-shop-category" placeholder="Category — e.g. Fashion, Electronics, Food" maxlength="120">
-              <textarea id="mkt-shop-desc" placeholder="Tell buyers about your store…" rows="3" maxlength="1000"></textarea>
-              <input type="text" id="mkt-shop-contact" placeholder="Contact for DMs — WhatsApp number, Instagram, or email" maxlength="255">
+              <!-- Step 1: business info -->
+              <div class="mkt-wizard__step is-active" data-step="1">
+                <input type="text" id="mkt-shop-name" placeholder="Business / store name" maxlength="160" required>
+                <input type="text" id="mkt-shop-category" placeholder="Category — e.g. Fashion, Electronics, Food" maxlength="120">
+                <textarea id="mkt-shop-desc" placeholder="Tell buyers about your store…" rows="3" maxlength="1000"></textarea>
+              </div>
 
-              <label class="mkt-cover-pick" id="mkt-cover-pick-btn">
-                <span id="mkt-cover-preview-label">+ Add a cover photo (optional)</span>
-                <input type="file" id="mkt-cover-input" accept="image/*" hidden>
-              </label>
+              <!-- Step 2: logo -->
+              <div class="mkt-wizard__step" data-step="2">
+                <p class="muted" style="font-size:12.5px;">Add your business logo — it'll show at the top of your storefront.</p>
+                <label class="mkt-logo-pick" id="mkt-logo-pick-btn">
+                  <span id="mkt-logo-preview-label">+ Add logo</span>
+                  <input type="file" id="mkt-logo-input" accept="image/*" hidden>
+                </label>
+                <label class="mkt-cover-pick" id="mkt-cover-pick-btn">
+                  <span id="mkt-cover-preview-label">+ Add a cover photo (optional)</span>
+                  <input type="file" id="mkt-cover-input" accept="image/*" hidden>
+                </label>
+              </div>
 
-              <div class="mkt-signup-form__row">
-                <div><b>Pick a design</b><span class="muted">You can change this anytime.</span></div>
+              <!-- Step 3: layout template -->
+              <div class="mkt-wizard__step" data-step="3">
+                <p class="muted" style="font-size:12.5px;">Pick how your product listings are laid out. You can change this anytime.</p>
+                <div class="mkt-template-grid" id="mkt-template-grid">
+                  <div class="mkt-template-opt is-active" data-template="grid">
+                    <div class="mkt-template-opt__preview"><span style="top:6px;left:6px;width:18px;height:14px;"></span><span style="top:6px;left:28px;width:18px;height:14px;"></span><span style="top:24px;left:6px;width:18px;height:14px;"></span><span style="top:24px;left:28px;width:18px;height:14px;"></span></div>
+                    <span class="label">Grid</span>
+                  </div>
+                  <div class="mkt-template-opt" data-template="catalog">
+                    <div class="mkt-template-opt__preview"><span style="top:6px;left:6px;width:40px;height:9px;"></span><span style="top:18px;left:6px;width:40px;height:9px;"></span><span style="top:30px;left:6px;width:40px;height:9px;"></span></div>
+                    <span class="label">Catalog</span>
+                  </div>
+                  <div class="mkt-template-opt" data-template="boutique">
+                    <div class="mkt-template-opt__preview"><span style="top:6px;left:8px;width:36px;height:22px;"></span></div>
+                    <span class="label">Boutique</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Step 4: color design -->
+              <div class="mkt-wizard__step" data-step="4">
+                <p class="muted" style="font-size:12.5px;">Pick a color theme. You can change this anytime.</p>
                 <div class="seg seg--themes" id="mkt-design-seg">
                   <button type="button" class="seg__opt is-active" data-design="aurora">Aurora</button>
                   <button type="button" class="seg__opt" data-design="sunset">Sunset</button>
@@ -403,7 +442,18 @@
                 </div>
               </div>
 
-              <button type="submit" class="auth-submit-alt" id="mkt-signup-submit">Open my store</button>
+              <!-- Step 5: review -->
+              <div class="mkt-wizard__step" data-step="5">
+                <p class="muted" style="font-size:12.5px;">Last thing — how should buyers reach you? Chat happens right on your storefront, but you can add a backup contact too (optional).</p>
+                <input type="text" id="mkt-shop-contact" placeholder="Optional backup contact — email, Instagram, etc." maxlength="255">
+                <p class="muted" style="font-size:12px;">Everything above can be edited later from "Edit store".</p>
+              </div>
+
+              <div class="mkt-wizard__nav">
+                <button type="button" class="ghost-btn" id="mkt-wizard-back" hidden>← Back</button>
+                <button type="button" class="auth-submit-alt" id="mkt-wizard-next">Next →</button>
+                <button type="submit" class="auth-submit-alt" id="mkt-signup-submit" hidden>Build my store</button>
+              </div>
             </form>
           </div>
 
@@ -430,12 +480,30 @@
             <div class="card-grid" id="mkt-products-grid"></div>
 
             <div class="view-head">
-              <div><div class="eyebrow-mini">Buyer DMs</div><h3>Messages.</h3></div>
+              <div><div class="eyebrow-mini">Buyer chats</div><h3>Messages.</h3></div>
             </div>
             <div class="history-list" id="mkt-inquiries-list"></div>
           </div>
         </div>
       </section>
+
+      <!-- Seller chat modal — reply to a buyer's in-app chat -->
+      <div class="shop-modal" id="mkt-chat-modal" hidden>
+        <div class="shop-modal__backdrop" id="mkt-chat-modal-backdrop"></div>
+        <div class="shop-modal__frame glass mkt-chat-panel">
+          <div class="shop-modal__head" style="padding:20px 20px 0;">
+            <div><h3 id="mkt-chat-buyer-name">—</h3><span class="muted" id="mkt-chat-product-name" style="font-size:11.5px;"></span></div>
+            <button type="button" class="item-card__remove" id="mkt-chat-modal-close">✕</button>
+          </div>
+          <div class="mkt-chat-panel__body" id="mkt-chat-body"></div>
+          <div class="mkt-chat-panel__composer">
+            <button type="button" class="mkt-chat-panel__img-btn" id="mkt-chat-img-btn" title="Attach a photo">📷</button>
+            <input type="file" id="mkt-chat-img-input" accept="image/*" hidden>
+            <textarea id="mkt-chat-input" rows="1" placeholder="Reply to buyer…"></textarea>
+            <button type="button" class="mkt-chat-panel__send" id="mkt-chat-send-btn" title="Send">➤</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Add-product modal -->
       <div class="shop-modal" id="mkt-product-modal" hidden>
