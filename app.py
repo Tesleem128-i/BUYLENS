@@ -735,6 +735,148 @@ class LivePriceCache(db.Model):
     fetched_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
 
+# ---------------------------------------------------------------------------
+# Marketplace — lets any shopper open their own tiny storefront inside
+# Prism: a business-card listing in the "Browse" tab that links out to a
+# real, shareable mini-site (/store/<slug>) built from a design they pick.
+# Buyers can't pay in-app yet (no payment rails), so the whole flow ends at
+# "message the seller" — a DM-style inquiry the seller sees in their own
+# Marketplace tab.
+# ---------------------------------------------------------------------------
+SHOP_DESIGNS = {"aurora", "sunset", "mono", "forest"}
+DEFAULT_SHOP_DESIGN = "aurora"
+
+
+class Shop(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, unique=True, index=True)
+    slug = db.Column(db.String(160), unique=True, nullable=False, index=True)
+    name = db.Column(db.String(160), nullable=False)
+    category = db.Column(db.String(120), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    # Where a buyer's DM should point them (WhatsApp number, Instagram handle,
+    # email, etc.) — free text, shown as-is on the storefront.
+    contact = db.Column(db.String(255), nullable=True)
+    design = db.Column(db.String(30), nullable=False, default=DEFAULT_SHOP_DESIGN, server_default=DEFAULT_SHOP_DESIGN)
+    cover_image = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self, product_count=0):
+        return {
+            "slug": self.slug,
+            "name": self.name,
+            "category": self.category or "",
+            "description": self.description or "",
+            "contact": self.contact or "",
+            "design": self.design if self.design in SHOP_DESIGNS else DEFAULT_SHOP_DESIGN,
+            "coverImageUrl": stored_image_url(self.cover_image),
+            "productCount": product_count,
+            "storeUrl": url_for("view_store", slug=self.slug),
+        }
+
+
+class ShopProduct(db.Model):
+    id = db.Column(db.String(40), primary_key=True)
+    shop_id = db.Column(db.Integer, db.ForeignKey("shop.id"), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    price = db.Column(db.String(120), nullable=False, default="—")
+    description = db.Column(db.Text, nullable=True)
+    photos_json = db.Column(db.Text, nullable=False, default="[]")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    @property
+    def photos(self):
+        try:
+            return json.loads(self.photos_json or "[]")
+        except Exception:
+            return []
+
+    @photos.setter
+    def photos(self, value):
+        self.photos_json = json.dumps(value or [])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "price": self.price,
+            "description": self.description or "",
+            "photoUrls": [stored_image_url(p) for p in self.photos if stored_image_url(p)],
+            "createdAt": int(self.created_at.timestamp() * 1000),
+        }
+
+
+class ShopInquiry(db.Model):
+    """A buyer 'sliding into the DM' of a seller — since there's no payment
+    or live chat yet, this is the whole transaction: the buyer leaves their
+    name, contact, and a message, and the seller reads it in their own
+    Marketplace tab."""
+    id = db.Column(db.Integer, primary_key=True)
+    shop_id = db.Column(db.Integer, db.ForeignKey("shop.id"), nullable=False, index=True)
+    product_id = db.Column(db.String(40), db.ForeignKey("shop_product.id"), nullable=True, index=True)
+    product_name = db.Column(db.String(200), nullable=True)
+    buyer_name = db.Column(db.String(160), nullable=False)
+    buyer_contact = db.Column(db.String(255), nullable=True)
+    message = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "productName": self.product_name or "",
+            "buyerName": self.buyer_name,
+            "buyerContact": self.buyer_contact or "",
+            "message": self.message,
+            "createdAt": int(self.created_at.timestamp() * 1000),
+        }
+
+
+def stored_image_url(path):
+    """Build a servable /uploads/pic/<file> URL for anything saved via
+    save_uploaded_profile_picture-style helpers, or None if missing/blank —
+    same "never render a broken image" guard as profile_picture_url."""
+    if not path:
+        return None
+    filename = path[len("pic/"):] if path.startswith("pic/") else path
+    full_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if not os.path.isfile(full_path):
+        return None
+    return url_for("serve_profile_picture", filename=filename)
+
+
+def slugify_shop_name(name):
+    base = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return base or "shop"
+
+
+def generate_unique_shop_slug(name):
+    base = slugify_shop_name(name)
+    slug = base
+    n = 2
+    while Shop.query.filter_by(slug=slug).first():
+        slug = f"{base}-{n}"
+        n += 1
+    return slug
+
+
+def save_uploaded_shop_image(file_storage, max_bytes=MAX_PROFILE_PICTURE_BYTES):
+    """Same validation as a profile picture, just saved under a distinct
+    filename prefix so it's obvious in the uploads folder which feature a
+    file came from. Returns (relative_path_or_None, error_message_or_None)."""
+    ok, error, data, mime = validate_image_upload(file_storage, max_bytes)
+    if not ok:
+        return None, error
+    ext = _IMAGE_EXT_BY_MIME.get(mime, "jpg")
+    unique_name = f"shop_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}.{ext}"
+    upload_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+    with open(upload_path, "wb") as f:
+        f.write(data)
+    return os.path.join("pic", unique_name).replace("\\", "/"), None
+
+
+MAX_PRODUCT_PHOTOS = 5
+
+
 def _normalize_price_query(product):
     return re.sub(r"\s+", " ", (product or "").strip().lower())
 
@@ -1180,6 +1322,83 @@ def is_known_ip_for_user(user_id, ip):
     ).scalar()
 
 
+def _describe_user_agent(ua_string):
+    """Human-readable device string built straight from the raw User-Agent
+    header. We intentionally don't rely on werkzeug's UA parser (its
+    accuracy/availability varies by version) — the raw string is always
+    good enough for a security notice."""
+    ua_string = (ua_string or "").strip()
+    if not ua_string:
+        return "an unknown device"
+    return ua_string if len(ua_string) <= 120 else ua_string[:117] + "..."
+
+
+def _format_login_time(dt):
+    """e.g. 'July 15, 2026 at 3:42 PM UTC'"""
+    return dt.strftime("%B %-d, %Y at %-I:%M %p UTC")
+
+
+def send_login_notification_email(user, ip, ua_string, when):
+    """Sent after every completed login so the account owner has a record of
+    when/where/what device signed in — separate from the new-device
+    verification code email, so it isn't sent twice in the same flow."""
+    device_desc = _describe_user_agent(ua_string)
+    when_str = _format_login_time(when)
+
+    html_content = f"""
+    <div style="background:#05070C;padding:48px 24px;font-family:'Inter',Arial,sans-serif;">
+      <div style="max-width:480px;margin:0 auto;background:#0A1024;border:1px solid rgba(255,255,255,.09);
+                  border-radius:18px;padding:40px;">
+        <h1 style="font-family:'Space Grotesk',Arial,sans-serif;color:#F2F5FF;font-size:28px;margin:0 0 4px;">
+          PR<span style="color:#4CE0FF;">ISM</span>
+        </h1>
+        <p style="color:#8B93AE;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 28px;">
+          New login to your account
+        </p>
+        <p style="color:#F2F5FF;font-size:15px;line-height:1.6;">
+          Hi {user.full_name}, your Prism account was just signed in to from
+          <b>{device_desc}</b> at <b>{when_str}</b> (IP: {ip or 'unknown'}).
+        </p>
+        <p style="color:#8B93AE;font-size:13px;margin-top:20px;line-height:1.6;">
+          If this was you, no action is needed. If you don't recognize this
+          activity, change your password right away and contact support.
+        </p>
+      </div>
+    </div>
+    """
+
+    payload = {
+        "sender": {"name": BREVO_SENDER_NAME, "email": BREVO_SENDER_EMAIL},
+        "to": [{"email": user.email, "name": user.full_name}],
+        "subject": "New login to your Prism account",
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY or "",
+        "content-type": "application/json",
+    }
+
+    if not BREVO_API_KEY:
+        app.logger.warning(
+            "BREVO_API_KEY is not set — skipping real send. Login notification for %s from %s at %s",
+            user.email, ip, when_str,
+        )
+        return False
+
+    try:
+        response = requests.post(BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        if response.status_code in (200, 201):
+            return True
+        app.logger.warning(
+            "Brevo login-notification email HTTP %s: %s", response.status_code, response.text[:500]
+        )
+        return False
+    except requests.RequestException as exc:
+        app.logger.error("Brevo login-notification email send failed: %s", exc)
+        return False
+
+
 CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -1470,6 +1689,9 @@ def login():
 
         db.session.add(LoginEvent(user_id=user.id, email=email, success=True, ip=client_ip))
         db.session.commit()
+        send_login_notification_email(
+            user, client_ip, request.headers.get("User-Agent", ""), datetime.utcnow()
+        )
 
         session.clear()
         session["user_id"] = user.id
@@ -1515,6 +1737,9 @@ def verify_device():
         user.lockout_until = None
         db.session.add(LoginEvent(user_id=user.id, email=user.email, success=True, ip=client_ip))
         db.session.commit()
+        send_login_notification_email(
+            user, client_ip, request.headers.get("User-Agent", ""), datetime.utcnow()
+        )
 
         session.clear()
         session["user_id"] = user.id
@@ -3219,6 +3444,189 @@ essentials first."""
         return jsonify(data)
     except Exception as exc:
         return _lens_error_response(exc)
+
+
+# ---------------------------------------------------------------------------
+# Marketplace API — sellers manage their storefront from the dashboard;
+# buyers browse from the dashboard too, but the storefront itself
+# (/store/<slug>) is a public, shareable page so a seller can send the link
+# to anyone, logged in or not.
+# ---------------------------------------------------------------------------
+def _shop_for_current_user():
+    return Shop.query.filter_by(user_id=session["user_id"]).first()
+
+
+@app.route("/api/shop/mine")
+@login_required
+def api_shop_mine():
+    shop = _shop_for_current_user()
+    if not shop:
+        return jsonify({"shop": None, "products": [], "inquiries": []})
+    products = ShopProduct.query.filter_by(shop_id=shop.id).order_by(ShopProduct.created_at.desc()).all()
+    inquiries = ShopInquiry.query.filter_by(shop_id=shop.id).order_by(ShopInquiry.created_at.desc()).limit(100).all()
+    return jsonify({
+        "shop": shop.to_dict(product_count=len(products)),
+        "products": [p.to_dict() for p in products],
+        "inquiries": [q.to_dict() for q in inquiries],
+    })
+
+
+@app.route("/api/shop/signup", methods=["POST"])
+@limiter.limit("10 per minute")
+@login_required
+def api_shop_signup():
+    """Create or update the logged-in user's storefront. One shop per
+    account — resubmitting this form (e.g. from 'Edit store') updates the
+    existing shop in place rather than creating a second one."""
+    uid = session["user_id"]
+    name = (request.form.get("name") or "").strip()
+    category = (request.form.get("category") or "").strip()
+    description = (request.form.get("description") or "").strip()
+    contact = (request.form.get("contact") or "").strip()
+    design = (request.form.get("design") or DEFAULT_SHOP_DESIGN).strip()
+    if design not in SHOP_DESIGNS:
+        design = DEFAULT_SHOP_DESIGN
+
+    if not name:
+        return jsonify({"error": "Give your store a name."}), 400
+    if len(name) > 160:
+        return jsonify({"error": "That store name is too long."}), 400
+
+    shop = _shop_for_current_user()
+    is_new = shop is None
+    if is_new:
+        shop = Shop(user_id=uid, slug=generate_unique_shop_slug(name), name=name)
+        db.session.add(shop)
+
+    shop.name = name
+    shop.category = category or None
+    shop.description = description or None
+    shop.contact = contact or None
+    shop.design = design
+
+    cover_file = request.files.get("cover_image")
+    if cover_file and cover_file.filename:
+        saved_path, upload_error = save_uploaded_shop_image(cover_file)
+        if upload_error:
+            return jsonify({"error": upload_error}), 400
+        shop.cover_image = saved_path
+
+    db.session.commit()
+    return jsonify({"shop": shop.to_dict(product_count=ShopProduct.query.filter_by(shop_id=shop.id).count()), "created": is_new})
+
+
+@app.route("/api/shop/products", methods=["POST"])
+@limiter.limit("30 per minute")
+@login_required
+def api_shop_product_add():
+    shop = _shop_for_current_user()
+    if not shop:
+        return jsonify({"error": "Open your store before adding products."}), 400
+
+    name = (request.form.get("name") or "").strip()
+    price = (request.form.get("price") or "").strip()
+    description = (request.form.get("description") or "").strip()
+    if not name or not price:
+        return jsonify({"error": "Give the product a name and a price."}), 400
+
+    photo_files = [f for f in request.files.getlist("photos") if f and f.filename][:MAX_PRODUCT_PHOTOS]
+    saved_paths = []
+    for f in photo_files:
+        saved_path, upload_error = save_uploaded_shop_image(f)
+        if upload_error:
+            return jsonify({"error": upload_error}), 400
+        saved_paths.append(saved_path)
+
+    product = ShopProduct(
+        id=f"sp_{shop.id}_{int(time.time()*1000)}_{secrets.token_hex(3)}",
+        shop_id=shop.id, name=name, price=price, description=description or None,
+    )
+    product.photos = saved_paths
+    db.session.add(product)
+    db.session.commit()
+    return jsonify(product.to_dict())
+
+
+@app.route("/api/shop/products/<product_id>", methods=["DELETE"])
+@login_required
+def api_shop_product_delete(product_id):
+    shop = _shop_for_current_user()
+    if not shop:
+        return jsonify({"error": "No store found."}), 404
+    product = ShopProduct.query.filter_by(id=product_id, shop_id=shop.id).first()
+    if product:
+        db.session.delete(product)
+        db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/shop/browse")
+@login_required
+def api_shop_browse():
+    """Business-card listings for the Browse tab. Excludes the viewer's own
+    store (they manage that from the Sell tab instead) and shops with zero
+    products (nothing to see yet)."""
+    q = (request.args.get("q") or "").strip().lower()
+    uid = session["user_id"]
+    shops = Shop.query.order_by(Shop.created_at.desc()).all()
+    cards = []
+    for shop in shops:
+        if shop.user_id == uid:
+            continue
+        count = ShopProduct.query.filter_by(shop_id=shop.id).count()
+        if count == 0:
+            continue
+        if q and q not in (shop.name or "").lower() and q not in (shop.category or "").lower() and q not in (shop.description or "").lower():
+            continue
+        cards.append(shop.to_dict(product_count=count))
+    return jsonify({"shops": cards})
+
+
+@app.route("/store/<slug>")
+def view_store(slug):
+    """The seller's mini-site — public, no login required, so the link
+    works for anyone it's shared with. Buyers can't check out here (no
+    payment yet); they browse the seller's photos/prices and send a DM."""
+    shop = Shop.query.filter_by(slug=slug).first()
+    if not shop:
+        return render_template("store_not_found.html"), 404
+    products = ShopProduct.query.filter_by(shop_id=shop.id).order_by(ShopProduct.created_at.desc()).all()
+    return render_template(
+        "store.html",
+        shop=shop.to_dict(product_count=len(products)),
+        products=[p.to_dict() for p in products],
+        csrf_token_value=generate_csrf(),
+    )
+
+
+@app.route("/api/shop/<slug>/inquire", methods=["POST"])
+@limiter.limit("10 per minute")
+def api_shop_inquire(slug):
+    """A buyer 'sliding into the DM'. Public endpoint — a shopper doesn't
+    need a Prism account to message a seller from their storefront page."""
+    shop = Shop.query.filter_by(slug=slug).first()
+    if not shop:
+        return jsonify({"error": "That store doesn't exist."}), 404
+
+    body = request.get_json(force=True, silent=True) or {}
+    buyer_name = (body.get("name") or "").strip()
+    buyer_contact = (body.get("contact") or "").strip()
+    message = (body.get("message") or "").strip()
+    product_id = (body.get("product_id") or "").strip() or None
+    product_name = (body.get("product_name") or "").strip() or None
+
+    if not buyer_name or not message:
+        return jsonify({"error": "Add your name and a short message for the seller."}), 400
+    if len(message) > 2000:
+        return jsonify({"error": "That message is a bit long — keep it under 2000 characters."}), 400
+
+    inquiry = ShopInquiry(
+        shop_id=shop.id, product_id=product_id, product_name=product_name,
+        buyer_name=buyer_name[:160], buyer_contact=buyer_contact[:255] or None, message=message,
+    )
+    db.session.add(inquiry)
+    db.session.commit()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

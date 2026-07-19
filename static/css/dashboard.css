@@ -1154,3 +1154,98 @@ body.theme-frost{ --void:#04101a; --navy:#0b2233; --cyan:#8FE3FF; --violet:#6FB7
 @media (max-width:900px){
   .tool-grid{ grid-template-columns:1fr; }
 }
+/* ---------- MARKETPLACE ---------- */
+.mkt-pane{ display:none; }
+.mkt-pane.is-active{ display:block; }
+.mkt-search{ display:flex; align-items:center; gap:10px; padding:14px 18px; margin-bottom:20px; }
+.mkt-search__icon{ color:var(--cyan); font-size:14px; }
+.mkt-search input{ flex:1; background:none; border:none; outline:none; color:var(--ink); font-size:13.5px; font-family:var(--body); }
+
+.mkt-card{ padding:0; overflow:hidden; text-decoration:none; color:var(--ink); display:flex; flex-direction:column; cursor:pointer; transition:transform .25s, box-shadow .25s; }
+.mkt-card:hover{ transform:translateY(-3px); box-shadow:0 20px 50px -24px rgba(76,224,255,.35); }
+.mkt-card__cover{
+  height:120px; background:linear-gradient(135deg, rgba(76,224,255,.18), rgba(157,107,255,.18));
+  background-size:cover; background-position:center; display:flex; align-items:flex-end; padding:10px;
+}
+.mkt-card__cat{
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; padding:4px 10px;
+  border-radius:100px; background:rgba(2,4,10,.55); backdrop-filter:blur(6px); color:var(--cyan);
+}
+.mkt-card__body{ padding:16px 18px 18px; display:flex; flex-direction:column; gap:6px; flex:1; }
+.mkt-card__name{ font-family:var(--display); font-weight:600; font-size:1rem; }
+.mkt-card__desc{ font-size:12.5px; color:var(--ink-dim); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.mkt-card__foot{ display:flex; justify-content:space-between; align-items:center; margin-top:auto; padding-top:8px; font-size:12px; color:var(--ink-dim); }
+.mkt-card__foot b{ color:var(--violet); font-family:var(--mono); font-weight:600; }
+
+.mkt-signup-sub{ font-size:13px; color:var(--ink-dim); line-height:1.6; margin:-6px 0 16px; max-width:60ch; }
+.mkt-signup-form{ display:flex; flex-direction:column; gap:12px; }
+.mkt-signup-form input, .mkt-signup-form textarea{
+  background:rgba(255,255,255,.03); border:1px solid var(--glass-brd); border-radius:12px;
+  padding:12px 16px; color:var(--ink); font-size:13.5px; outline:none; font-family:var(--body); resize:vertical;
+}
+.mkt-signup-form input:focus, .mkt-signup-form textarea:focus{ border-color:rgba(76,224,255,.4); }
+.mkt-signup-form__row{ display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+.mkt-signup-form__row > div{ display:flex; flex-direction:column; gap:2px; }
+.mkt-signup-form__row b{ font-size:13.5px; }
+.mkt-signup-form__row .muted{ font-size:11.5px; }
+
+.mkt-cover-pick{
+  display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+  border:1px dashed var(--glass-brd); border-radius:12px; padding:16px; font-size:12.5px; color:var(--cyan);
+  background:rgba(76,224,255,.04); transition:border-color .2s, background .2s;
+}
+.mkt-cover-pick:hover{ border-color:rgba(76,224,255,.5); background:rgba(76,224,255,.08); }
+
+.mkt-photo-preview{ display:flex; flex-wrap:wrap; gap:8px; }
+.mkt-photo-preview__thumb{ position:relative; width:64px; height:64px; border-radius:10px; overflow:hidden; flex:none; }
+.mkt-photo-preview__thumb img{ width:100%; height:100%; object-fit:cover; }
+.mkt-photo-preview__thumb button{
+  position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:50%; border:none;
+  background:rgba(2,4,10,.75); color:#fff; font-size:10px; cursor:pointer; line-height:1;
+}
+
+.mkt-shop-card{ padding:0; overflow:hidden; margin-bottom:24px; }
+.mkt-shop-card__top{ display:flex; gap:0; flex-wrap:wrap; }
+.mkt-shop-card__cover{
+  width:180px; min-height:120px; flex:none; background:linear-gradient(135deg, rgba(76,224,255,.18), rgba(157,107,255,.18));
+  background-size:cover; background-position:center;
+}
+.mkt-shop-card__info{ padding:20px; flex:1; min-width:220px; }
+.mkt-shop-card__info h3{ font-family:var(--display); font-size:1.15rem; }
+.mkt-shop-card__desc{ font-size:12.5px; color:var(--ink-dim); margin-top:8px; line-height:1.55; max-width:52ch; }
+.mkt-shop-card__actions{ display:flex; gap:10px; padding:0 20px 20px; flex-wrap:wrap; }
+
+.mkt-product-card{ padding:0; overflow:hidden; display:flex; flex-direction:column; }
+.mkt-product-card__photo{
+  height:140px; background:rgba(255,255,255,.04); background-size:cover; background-position:center;
+  display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:12px; position:relative;
+}
+.mkt-product-card__count{
+  position:absolute; bottom:8px; right:8px; font-family:var(--mono); font-size:10.5px; padding:3px 8px;
+  border-radius:100px; background:rgba(2,4,10,.65); color:var(--ink);
+}
+.mkt-product-card__body{ padding:16px 18px; display:flex; flex-direction:column; gap:6px; }
+.mkt-product-card__name{ font-family:var(--display); font-weight:600; font-size:.98rem; }
+.mkt-product-card__price{ font-family:var(--mono); color:var(--violet); font-size:13px; }
+.mkt-product-card__remove{ align-self:flex-start; margin-top:4px; }
+
+.mkt-inquiry-item{ display:flex; flex-direction:column; gap:4px; padding:14px 18px; background:var(--glass); border:1px solid var(--glass-brd); border-radius:14px; font-size:13.5px; }
+.mkt-inquiry-item__head{ display:flex; justify-content:space-between; gap:10px; }
+.mkt-inquiry-item__head b{ font-family:var(--display); }
+.mkt-inquiry-item__meta{ font-size:11.5px; color:var(--ink-dim); }
+.mkt-inquiry-item__msg{ font-size:13px; color:var(--ink-dim); line-height:1.5; }
+
+/* generic modal frame, shared style with the camera-capture modal */
+.shop-modal{ position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center; padding:20px; }
+.shop-modal[hidden]{ display:none; }
+.shop-modal__backdrop{ position:absolute; inset:0; background:rgba(2,4,10,.78); backdrop-filter:blur(6px); }
+.shop-modal__frame{
+  position:relative; z-index:2; padding:24px; border-radius:22px; width:min(520px, 100%);
+  max-height:86vh; overflow-y:auto; display:flex; flex-direction:column; gap:16px;
+}
+.shop-modal__head{ display:flex; align-items:center; justify-content:space-between; }
+.shop-modal__head h3{ font-family:var(--display); font-size:1.1rem; }
+
+@media (max-width:700px){
+  .mkt-shop-card__cover{ width:100%; height:110px; }
+}

@@ -264,6 +264,7 @@
     trackFeature("view:" + name);
     if (name === "analytics") requestAnimationFrame(renderCharts);
     if (name === "copilot") renderMemoryCard();
+    if (name === "marketplace") { loadMarketplaceBrowse(); loadMarketplaceMine(); }
     if (window.innerWidth <= 900) collapseRail(true);
   }
   railItems.forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
@@ -1825,6 +1826,286 @@
   }
 
   renderToolGrid();
+
+  /* ================================================================
+     MARKETPLACE — sellers open a store (Sell tab), buyers browse
+     business-card listings (Browse tab) that link out to a public,
+     shareable mini-site at /store/<slug>. No payment yet — the whole
+     flow ends at a buyer DM the seller reads back here.
+     ================================================================ */
+  const mktState = { shop: null, products: [], inquiries: [], design: "aurora", editing: false };
+
+  async function postForm(url, formData, method = "POST") {
+    const res = await fetch(url, { method, body: formData, headers: { "X-CSRFToken": csrfToken() } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Request failed.");
+    return data;
+  }
+
+  /* ---- tab switching (Browse / Sell) ---- */
+  $$("#mkt-tab-seg .seg__opt").forEach((btn) => btn.addEventListener("click", () => {
+    $$("#mkt-tab-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b === btn));
+    const tab = btn.dataset.mktTab;
+    $("#mkt-pane-browse").classList.toggle("is-active", tab === "browse");
+    $("#mkt-pane-sell").classList.toggle("is-active", tab === "sell");
+    trackFeature("marketplace:tab:" + tab);
+  }));
+
+  /* ---- BROWSE ---- */
+  let mktSearchTimer = null;
+  async function loadMarketplaceBrowse(query = "") {
+    const grid = $("#mkt-browse-grid");
+    if (!grid) return;
+    try {
+      const data = await getJSON("/api/shop/browse" + (query ? `?q=${encodeURIComponent(query)}` : ""));
+      renderMarketplaceBrowse(data.shops || []);
+    } catch (err) {
+      grid.innerHTML = `<p class="empty-note">⚠️ Couldn't load storefronts right now.</p>`;
+    }
+  }
+  function renderMarketplaceBrowse(shops) {
+    const grid = $("#mkt-browse-grid");
+    if (!shops.length) {
+      grid.innerHTML = `<p class="empty-note">No storefronts yet — be the first to open one from the Sell tab.</p>`;
+      return;
+    }
+    grid.innerHTML = shops.map((s) => `
+      <a class="glass item-card mkt-card" href="${escapeHtmlAttr(s.storeUrl)}" target="_blank" rel="noopener">
+        <div class="mkt-card__cover" style="${s.coverImageUrl ? `background-image:url('${escapeHtmlAttr(s.coverImageUrl)}')` : ""}">
+          ${s.category ? `<span class="mkt-card__cat">${escapeHtml(s.category)}</span>` : ""}
+        </div>
+        <div class="mkt-card__body">
+          <span class="mkt-card__name">${escapeHtml(s.name)}</span>
+          <span class="mkt-card__desc">${escapeHtml(s.description || "No description yet.")}</span>
+          <div class="mkt-card__foot"><span>Visit store ↗</span><b>${s.productCount} item${s.productCount === 1 ? "" : "s"}</b></div>
+        </div>
+      </a>
+    `).join("");
+  }
+  $("#mkt-search-input")?.addEventListener("input", (e) => {
+    clearTimeout(mktSearchTimer);
+    const q = e.target.value.trim();
+    mktSearchTimer = setTimeout(() => loadMarketplaceBrowse(q), 300);
+  });
+
+  /* ---- SELL: my shop ---- */
+  async function loadMarketplaceMine() {
+    try {
+      const data = await getJSON("/api/shop/mine");
+      mktState.shop = data.shop;
+      mktState.products = data.products || [];
+      mktState.inquiries = data.inquiries || [];
+      renderMarketplaceMine();
+    } catch (err) {
+      /* keep whatever was last rendered */
+    }
+  }
+  function renderMarketplaceMine() {
+    const hasShop = !!mktState.shop && !mktState.editing;
+    $("#mkt-signup-panel").hidden = hasShop;
+    $("#mkt-shop-dashboard").hidden = !hasShop;
+    if (!mktState.shop) return;
+
+    const shop = mktState.shop;
+    $("#mkt-my-shop-name").textContent = shop.name;
+    $("#mkt-my-shop-cat").textContent = shop.category || "General store";
+    $("#mkt-my-shop-desc").textContent = shop.description || "No description yet — add one from Edit store.";
+    $("#mkt-my-shop-view-link").href = shop.storeUrl;
+    const cover = $("#mkt-my-shop-cover");
+    if (cover) cover.style.backgroundImage = shop.coverImageUrl ? `url('${shop.coverImageUrl}')` : "";
+
+    renderMarketplaceProducts();
+    renderMarketplaceInquiries();
+  }
+  function renderMarketplaceProducts() {
+    const grid = $("#mkt-products-grid");
+    if (!grid) return;
+    if (!mktState.products.length) {
+      grid.innerHTML = `<p class="empty-note">No products yet — add your first one.</p>`;
+      return;
+    }
+    grid.innerHTML = mktState.products.map((p) => `
+      <div class="glass mkt-product-card">
+        <div class="mkt-product-card__photo" style="${p.photoUrls[0] ? `background-image:url('${escapeHtmlAttr(p.photoUrls[0])}')` : ""}">
+          ${!p.photoUrls.length ? "No photo" : ""}
+          ${p.photoUrls.length > 1 ? `<span class="mkt-product-card__count">${p.photoUrls.length} photos</span>` : ""}
+        </div>
+        <div class="mkt-product-card__body">
+          <span class="mkt-product-card__name">${escapeHtml(p.name)}</span>
+          <span class="mkt-product-card__price">${escapeHtml(p.price)}</span>
+          <button class="ghost-btn mkt-product-card__remove" data-remove-product="${p.id}">Remove</button>
+        </div>
+      </div>
+    `).join("");
+  }
+  $("#mkt-products-grid")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-remove-product]");
+    if (!btn) return;
+    const id = btn.dataset.removeProduct;
+    btn.disabled = true;
+    try {
+      await deleteJSON(`/api/shop/products/${encodeURIComponent(id)}`);
+      mktState.products = mktState.products.filter((p) => p.id !== id);
+      renderMarketplaceProducts();
+      toast("Product removed.");
+    } catch (err) {
+      toast("⚠️ " + err.message);
+      btn.disabled = false;
+    }
+  });
+  function renderMarketplaceInquiries() {
+    const list = $("#mkt-inquiries-list");
+    if (!list) return;
+    if (!mktState.inquiries.length) {
+      list.innerHTML = `<p class="empty-note">No buyer messages yet — they'll show up here once someone DMs your store.</p>`;
+      return;
+    }
+    list.innerHTML = mktState.inquiries.map((q) => `
+      <div class="mkt-inquiry-item">
+        <div class="mkt-inquiry-item__head">
+          <b>${escapeHtml(q.buyerName)}</b>
+          <time>${new Date(q.createdAt).toLocaleDateString()}</time>
+        </div>
+        ${q.productName ? `<span class="mkt-inquiry-item__meta">About: ${escapeHtml(q.productName)}</span>` : ""}
+        ${q.buyerContact ? `<span class="mkt-inquiry-item__meta">Contact: ${escapeHtml(q.buyerContact)}</span>` : ""}
+        <p class="mkt-inquiry-item__msg">${escapeHtml(q.message)}</p>
+      </div>
+    `).join("");
+  }
+
+  /* ---- signup / edit form ---- */
+  let pendingShopCoverFile = null;
+  $$("#mkt-design-seg .seg__opt").forEach((btn) => btn.addEventListener("click", () => {
+    $$("#mkt-design-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b === btn));
+    mktState.design = btn.dataset.design;
+  }));
+  $("#mkt-cover-input")?.addEventListener("change", () => {
+    const file = $("#mkt-cover-input").files[0];
+    if (!file) return;
+    pendingShopCoverFile = file;
+    $("#mkt-cover-preview-label").textContent = `✓ ${file.name}`;
+  });
+  $("#mkt-edit-shop-btn")?.addEventListener("click", () => {
+    const shop = mktState.shop;
+    if (!shop) return;
+    mktState.editing = true;
+    $("#mkt-shop-name").value = shop.name;
+    $("#mkt-shop-category").value = shop.category || "";
+    $("#mkt-shop-desc").value = shop.description || "";
+    $("#mkt-shop-contact").value = shop.contact || "";
+    $$("#mkt-design-seg .seg__opt").forEach((b) => b.classList.toggle("is-active", b.dataset.design === shop.design));
+    mktState.design = shop.design;
+    $("#mkt-signup-submit").textContent = "Save changes";
+    renderMarketplaceMine();
+  });
+  $("#mkt-signup-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#mkt-shop-name").value.trim();
+    if (!name) return;
+    const btn = $("#mkt-signup-submit");
+    btn.disabled = true;
+    const wasEditing = mktState.editing;
+    btn.textContent = wasEditing ? "Saving…" : "Opening your store…";
+
+    const fd = new FormData();
+    fd.append("name", name);
+    fd.append("category", $("#mkt-shop-category").value.trim());
+    fd.append("description", $("#mkt-shop-desc").value.trim());
+    fd.append("contact", $("#mkt-shop-contact").value.trim());
+    fd.append("design", mktState.design);
+    if (pendingShopCoverFile) fd.append("cover_image", pendingShopCoverFile);
+
+    try {
+      const data = await postForm("/api/shop/signup", fd);
+      mktState.shop = data.shop;
+      mktState.editing = false;
+      pendingShopCoverFile = null;
+      $("#mkt-cover-preview-label").textContent = "+ Add a cover photo (optional)";
+      btn.textContent = "Open my store";
+      renderMarketplaceMine();
+      toast(data.created ? "🎉 Your store is live!" : "Store updated.");
+      maybeAward("Opened a Marketplace store");
+      trackFeature("marketplace:shop-" + (data.created ? "created" : "updated"));
+      if (data.created) loadMarketplaceBrowse();
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /* ---- add-product modal ---- */
+  const mktProductModal = $("#mkt-product-modal");
+  let pendingProductPhotos = [];
+  function openProductModal() { if (mktProductModal) mktProductModal.hidden = false; }
+  function closeProductModal() {
+    if (!mktProductModal) return;
+    mktProductModal.hidden = true;
+    $("#mkt-product-form").reset();
+    pendingProductPhotos = [];
+    $("#mkt-product-photo-preview").innerHTML = "";
+    $("#mkt-product-photos-label").textContent = "+ Add photos (up to 5)";
+  }
+  $("#mkt-add-product-btn")?.addEventListener("click", () => {
+    if (!mktState.shop) { toast("Open your store first."); return; }
+    openProductModal();
+  });
+  $("#mkt-product-modal-close")?.addEventListener("click", closeProductModal);
+  $("#mkt-product-modal-backdrop")?.addEventListener("click", closeProductModal);
+  $("#mkt-product-photos-input")?.addEventListener("change", () => {
+    const files = Array.from($("#mkt-product-photos-input").files || []).slice(0, 5);
+    pendingProductPhotos = files;
+    $("#mkt-product-photos-label").textContent = files.length ? `✓ ${files.length} photo${files.length > 1 ? "s" : ""} selected` : "+ Add photos (up to 5)";
+    const preview = $("#mkt-product-photo-preview");
+    preview.innerHTML = "";
+    files.forEach((file, i) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const div = document.createElement("div");
+        div.className = "mkt-photo-preview__thumb";
+        div.innerHTML = `<img src="${reader.result}" alt=""><button type="button" data-idx="${i}">✕</button>`;
+        preview.appendChild(div);
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+  $("#mkt-product-photo-preview")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-idx]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.idx);
+    pendingProductPhotos.splice(idx, 1);
+    btn.closest(".mkt-photo-preview__thumb").remove();
+  });
+  $("#mkt-product-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#mkt-product-name").value.trim();
+    const price = $("#mkt-product-price").value.trim();
+    if (!name || !price) return;
+    const btn = $("#mkt-product-submit");
+    btn.disabled = true;
+    btn.textContent = "Adding…";
+
+    const fd = new FormData();
+    fd.append("name", name);
+    fd.append("price", price);
+    fd.append("description", $("#mkt-product-desc").value.trim());
+    pendingProductPhotos.forEach((f) => fd.append("photos", f));
+
+    try {
+      const product = await postForm("/api/shop/products", fd);
+      mktState.products.unshift(product);
+      renderMarketplaceProducts();
+      closeProductModal();
+      toast(`Added ${product.name} to your store.`);
+      maybeAward("Listed first product");
+      trackFeature("marketplace:product-added");
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Add product";
+    }
+  });
 
   /* ================================================================
      init

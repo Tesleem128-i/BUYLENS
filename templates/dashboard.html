@@ -57,6 +57,11 @@
         <span class="rail__icon">⇄</span><span class="rail__label">Compare</span>
       </button>
 
+      <div class="rail__section-label">Marketplace</div>
+      <button class="rail__item" data-view="marketplace">
+        <span class="rail__icon">🏬</span><span class="rail__label">Marketplace</span>
+      </button>
+
       <div class="rail__section-label">Track</div>
       <button class="rail__item" data-view="wishlist">
         <span class="rail__icon">♡</span><span class="rail__label">Wishlist</span>
@@ -349,6 +354,110 @@
 
         <div id="compare-results"></div>
       </section>
+
+      <!-- ---------- MARKETPLACE ---------- -->
+      <section class="view" id="view-marketplace">
+        <div class="view-head">
+          <div>
+            <div class="eyebrow-mini">Buy &amp; Sell</div>
+            <h2>Marketplace.</h2>
+          </div>
+          <div class="seg" id="mkt-tab-seg">
+            <button class="seg__opt is-active" type="button" data-mkt-tab="browse">Browse</button>
+            <button class="seg__opt" type="button" data-mkt-tab="sell">Sell</button>
+          </div>
+        </div>
+
+        <!-- BROWSE -->
+        <div class="mkt-pane is-active" id="mkt-pane-browse">
+          <div class="mkt-search glass">
+            <span class="mkt-search__icon">◎</span>
+            <input type="text" id="mkt-search-input" placeholder="Search stores or what they're selling…">
+          </div>
+          <div class="card-grid" id="mkt-browse-grid"><p class="empty-note">Loading storefronts…</p></div>
+        </div>
+
+        <!-- SELL -->
+        <div class="mkt-pane" id="mkt-pane-sell">
+          <div class="glass panel" id="mkt-signup-panel" hidden>
+            <div class="panel__head"><h3>Open your store</h3><span class="eyebrow-mini">Free · no payment needed yet</span></div>
+            <p class="mkt-signup-sub">Tell buyers what you sell, add a few photos, and Prism builds you a mini storefront with its own shareable link.</p>
+            <form id="mkt-signup-form" class="mkt-signup-form">
+              <input type="text" id="mkt-shop-name" placeholder="Business / store name" maxlength="160" required>
+              <input type="text" id="mkt-shop-category" placeholder="Category — e.g. Fashion, Electronics, Food" maxlength="120">
+              <textarea id="mkt-shop-desc" placeholder="Tell buyers about your store…" rows="3" maxlength="1000"></textarea>
+              <input type="text" id="mkt-shop-contact" placeholder="Contact for DMs — WhatsApp number, Instagram, or email" maxlength="255">
+
+              <label class="mkt-cover-pick" id="mkt-cover-pick-btn">
+                <span id="mkt-cover-preview-label">+ Add a cover photo (optional)</span>
+                <input type="file" id="mkt-cover-input" accept="image/*" hidden>
+              </label>
+
+              <div class="mkt-signup-form__row">
+                <div><b>Pick a design</b><span class="muted">You can change this anytime.</span></div>
+                <div class="seg seg--themes" id="mkt-design-seg">
+                  <button type="button" class="seg__opt is-active" data-design="aurora">Aurora</button>
+                  <button type="button" class="seg__opt" data-design="sunset">Sunset</button>
+                  <button type="button" class="seg__opt" data-design="mono">Mono</button>
+                  <button type="button" class="seg__opt" data-design="forest">Forest</button>
+                </div>
+              </div>
+
+              <button type="submit" class="auth-submit-alt" id="mkt-signup-submit">Open my store</button>
+            </form>
+          </div>
+
+          <div id="mkt-shop-dashboard" hidden>
+            <div class="glass panel mkt-shop-card">
+              <div class="mkt-shop-card__top">
+                <div class="mkt-shop-card__cover" id="mkt-my-shop-cover"></div>
+                <div class="mkt-shop-card__info">
+                  <h3 id="mkt-my-shop-name">—</h3>
+                  <span class="muted" id="mkt-my-shop-cat">—</span>
+                  <p id="mkt-my-shop-desc" class="mkt-shop-card__desc"></p>
+                </div>
+              </div>
+              <div class="mkt-shop-card__actions">
+                <a class="ghost-btn" id="mkt-my-shop-view-link" href="#" target="_blank" rel="noopener">View my store ↗</a>
+                <button class="ghost-btn" type="button" id="mkt-edit-shop-btn">Edit store</button>
+              </div>
+            </div>
+
+            <div class="view-head">
+              <div><div class="eyebrow-mini">Inventory</div><h3>Your products.</h3></div>
+              <button class="ghost-btn" type="button" id="mkt-add-product-btn">+ Add product</button>
+            </div>
+            <div class="card-grid" id="mkt-products-grid"></div>
+
+            <div class="view-head">
+              <div><div class="eyebrow-mini">Buyer DMs</div><h3>Messages.</h3></div>
+            </div>
+            <div class="history-list" id="mkt-inquiries-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Add-product modal -->
+      <div class="shop-modal" id="mkt-product-modal" hidden>
+        <div class="shop-modal__backdrop" id="mkt-product-modal-backdrop"></div>
+        <div class="shop-modal__frame glass">
+          <div class="shop-modal__head">
+            <h3>Add a product</h3>
+            <button type="button" class="item-card__remove" id="mkt-product-modal-close">✕</button>
+          </div>
+          <form id="mkt-product-form" class="mkt-signup-form">
+            <input type="text" id="mkt-product-name" placeholder="Product name" maxlength="200" required>
+            <input type="text" id="mkt-product-price" placeholder="Price — e.g. ₦25,000" maxlength="120" required>
+            <textarea id="mkt-product-desc" placeholder="Describe the item…" rows="3" maxlength="1000"></textarea>
+            <label class="mkt-cover-pick" id="mkt-product-photos-pick">
+              <span id="mkt-product-photos-label">+ Add photos (up to 5)</span>
+              <input type="file" id="mkt-product-photos-input" accept="image/*" multiple hidden>
+            </label>
+            <div class="mkt-photo-preview" id="mkt-product-photo-preview"></div>
+            <button type="submit" class="auth-submit-alt" id="mkt-product-submit">Add product</button>
+          </form>
+        </div>
+      </div>
 
       <!-- ---------- WISHLIST ---------- -->
       <section class="view" id="view-wishlist">
