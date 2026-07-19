@@ -801,8 +801,30 @@
     return wrapPack(inner, p.tag);
   }
 
+  function internalMatchCard(m) {
+    return `
+      <div class="internal-match">
+        ${m.photoUrl ? `<img class="internal-match__photo" src="${escapeHtml(m.photoUrl)}" alt="${escapeHtml(m.name)}" />` : `<div class="internal-match__photo internal-match__photo--empty">📦</div>`}
+        <div class="internal-match__info">
+          <span class="internal-match__badge">On Prism right now</span>
+          <div class="internal-match__name">${escapeHtml(m.name)}</div>
+          <div class="internal-match__meta">${escapeHtml(m.price || "")} · sold by ${escapeHtml(m.shopName)}</div>
+        </div>
+        <div class="internal-match__actions">
+          <a class="btn btn--primary" href="${escapeHtml(m.storeUrl)}" target="_blank" rel="noopener">Buy from ${escapeHtml(m.shopName)}</a>
+        </div>
+      </div>`;
+  }
+
   function renderSearchResults(data) {
+    const matches = data.internal_matches || [];
+    const matchesBlock = matches.length ? `
+      <div class="glass internal-match-card">
+        <div class="internal-match-card__head">✅ Found on Prism — buy directly from a seller</div>
+        ${matches.map(internalMatchCard).join("")}
+      </div>` : "";
     searchResults.innerHTML = `
+      ${matchesBlock}
       <div class="glass result-card">
         <div class="result-card__interp">${escapeHtml(data.interpretation || "")}</div>
         <div class="result-card__verdict">${escapeHtml(data.verdict || "")}</div>

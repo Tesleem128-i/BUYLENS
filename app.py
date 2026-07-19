@@ -876,6 +876,59 @@ def save_uploaded_shop_image(file_storage, max_bytes=MAX_PROFILE_PICTURE_BYTES):
 
 MAX_PRODUCT_PHOTOS = 5
 
+# ---------------------------------------------------------------------------
+# "Buy from us first": before Prism sends a shopper to an AI price estimate
+# or an external retailer link, check whether one of our own sellers
+# (Shop/ShopProduct) already lists the thing they're searching for. If so,
+# that listing should win — it's a real, in-app seller, not a guess.
+# ---------------------------------------------------------------------------
+_SEARCH_STOPWORDS = {
+    "a", "an", "the", "for", "to", "of", "in", "on", "with", "and", "or",
+    "best", "good", "cheap", "new", "used", "buy", "get", "need", "want",
+    "some", "any", "my", "me", "please", "cheapest", "affordable",
+}
+
+
+def _search_tokens(text):
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 3} - _SEARCH_STOPWORDS
+
+
+def find_internal_matches(query, limit=3, min_score=0.4):
+    """Look through every seller's storefront on Prism for a product whose
+    name overlaps with what the shopper searched. Returns the best matches
+    (highest token-overlap first) as plain dicts ready for the API response,
+    or [] if nothing on the platform is a good enough match — a partial,
+    noisy match (e.g. one short word in common) is worse than no match, so
+    results below min_score are dropped rather than shown."""
+    q_tokens = _search_tokens(query)
+    if not q_tokens:
+        return []
+    rows = db.session.query(ShopProduct, Shop).join(Shop, ShopProduct.shop_id == Shop.id).all()
+    scored = []
+    for product, shop in rows:
+        overlap = q_tokens & _search_tokens(product.name)
+        if not overlap:
+            continue
+        score = len(overlap) / len(q_tokens)
+        if score >= min_score:
+            scored.append((score, product, shop))
+    scored.sort(key=lambda row: row[0], reverse=True)
+
+    matches = []
+    for _, product, shop in scored[:limit]:
+        photos = product.photos
+        matches.append({
+            "productId": product.id,
+            "name": product.name,
+            "price": product.price,
+            "photoUrl": stored_image_url(photos[0]) if photos else None,
+            "shopName": shop.name,
+            "shopSlug": shop.slug,
+            "storeUrl": url_for("view_store", slug=shop.slug),
+        })
+    return matches
+
+
 
 def _normalize_price_query(product):
     return re.sub(r"\s+", " ", (product or "").strip().lower())
@@ -2615,12 +2668,23 @@ Respond with ONLY JSON matching this exact shape, no markdown fences:
 Provide exactly 3 picks, realistic and specific to the query (real-world plausible models/specs).
 Every price_estimate MUST be in {currency} ({symbol}) — do not use any other currency."""
 
+    internal_matches = find_internal_matches(query)
+
     try:
         data = lens_generate_json(
             [{"role": "user", "parts": [{"text": prompt}]}],
             system_instruction=build_system_prompt(build_memory_profile(session["user_id"])["notes"], currency=currency),
         )
         data = enrich_picks(data)
+        data["internal_matches"] = internal_matches
+        if internal_matches:
+            # A real seller on Prism already has this — that beats an AI
+            # price estimate or a link off-platform, so say so up front.
+            data["verdict"] = (
+                f"Good news — a Prism seller already has this. Buy it directly from "
+                f"{internal_matches[0]['shopName']} on Prism instead of guessing from "
+                f"estimates or going elsewhere. " + data.get("verdict", "")
+            ).strip()
         return jsonify(data)
     except Exception as exc:
         return _lens_error_response(exc)
