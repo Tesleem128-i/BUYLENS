@@ -2207,6 +2207,34 @@
     goToWizardStep(1);
     renderMarketplaceMine();
   });
+  $("#mkt-delete-shop-btn")?.addEventListener("click", async () => {
+    const shop = mktState.shop;
+    if (!shop) return;
+    const productCount = mktState.products.length;
+    const warning = productCount
+      ? `Delete "${shop.name}"? This permanently removes your storefront, all ${productCount} product${productCount === 1 ? "" : "s"}, and every buyer conversation. This can't be undone.`
+      : `Delete "${shop.name}"? This permanently removes your storefront and can't be undone.`;
+    if (!confirm(warning)) return;
+    const btn = $("#mkt-delete-shop-btn");
+    btn.disabled = true;
+    btn.textContent = "Deleting…";
+    try {
+      await deleteJSON("/api/shop/mine");
+      mktState.shop = null;
+      mktState.products = [];
+      mktState.conversations = [];
+      mktState.editing = false;
+      renderMarketplaceMine();
+      toast("Your store has been deleted.");
+      trackFeature("marketplace:shop-deleted");
+      loadMarketplaceBrowse();
+    } catch (err) {
+      toast("⚠️ " + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Delete store";
+    }
+  });
   $("#mkt-signup-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("#mkt-shop-name").value.trim();

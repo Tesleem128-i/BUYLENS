@@ -3582,10 +3582,27 @@ def _shop_for_current_user():
     return Shop.query.filter_by(user_id=session["user_id"]).first()
 
 
-@app.route("/api/shop/mine")
+@app.route("/api/shop/mine", methods=["GET", "DELETE"])
 @login_required
 def api_shop_mine():
     shop = _shop_for_current_user()
+    if request.method == "DELETE":
+        if not shop:
+            return jsonify({"error": "No store found."}), 404
+        # Cascade delete everything hanging off this shop — products,
+        # every conversation, and every message in those conversations —
+        # before removing the shop row itself. None of these tables have
+        # a DB-level ON DELETE CASCADE set up, so it's done explicitly here
+        # rather than leaving orphaned rows behind.
+        convo_ids = [c.id for c in ShopConversation.query.filter_by(shop_id=shop.id).all()]
+        if convo_ids:
+            ShopMessage.query.filter(ShopMessage.conversation_id.in_(convo_ids)).delete(synchronize_session=False)
+            ShopConversation.query.filter_by(shop_id=shop.id).delete(synchronize_session=False)
+        ShopProduct.query.filter_by(shop_id=shop.id).delete(synchronize_session=False)
+        db.session.delete(shop)
+        db.session.commit()
+        return jsonify({"ok": True})
+
     if not shop:
         return jsonify({"shop": None, "products": [], "conversations": []})
     products = ShopProduct.query.filter_by(shop_id=shop.id).order_by(ShopProduct.created_at.desc()).all()
