@@ -1870,6 +1870,7 @@
     editing: false, wizardStep: 1, activeConvoId: null, chatPollTimer: null,
   };
   const STOCK_LABELS = { in_stock: "In stock", limited: "Limited stock", sold_out: "Sold out" };
+  const MAX_PRODUCTS_PER_SHOP = 100;
 
   async function postForm(url, formData, method = "POST") {
     const res = await fetch(url, { method, body: formData, headers: { "X-CSRFToken": csrfToken() } });
@@ -1909,6 +1910,7 @@
       <a class="glass item-card mkt-card" href="${escapeHtmlAttr(s.storeUrl)}" target="_blank" rel="noopener">
         <div class="mkt-card__cover" style="${s.coverImageUrl ? `background-image:url('${escapeHtmlAttr(s.coverImageUrl)}')` : ""}">
           ${s.category ? `<span class="mkt-card__cat">${escapeHtml(s.category)}</span>` : ""}
+          ${s.logoImageUrl ? `<img class="mkt-card__logo" src="${escapeHtmlAttr(s.logoImageUrl)}" alt="">` : `<span class="mkt-card__logo mkt-card__logo--fallback">${escapeHtml((s.name || "?").charAt(0).toUpperCase())}</span>`}
         </div>
         <div class="mkt-card__body">
           <span class="mkt-card__name">${escapeHtml(s.name)}</span>
@@ -1949,6 +1951,16 @@
     $("#mkt-my-shop-view-link").href = shop.storeUrl;
     const cover = $("#mkt-my-shop-cover");
     if (cover) cover.style.backgroundImage = shop.coverImageUrl ? `url('${shop.coverImageUrl}')` : "";
+    const logoImg = $("#mkt-my-shop-logo");
+    const logoFallback = $("#mkt-my-shop-logo-fallback");
+    if (logoImg && logoFallback) {
+      if (shop.logoImageUrl) {
+        logoImg.src = shop.logoImageUrl; logoImg.hidden = false; logoFallback.hidden = true;
+      } else {
+        logoImg.hidden = true; logoFallback.hidden = false;
+        logoFallback.textContent = (shop.name || "?").charAt(0).toUpperCase();
+      }
+    }
 
     renderMarketplaceProducts();
     renderMarketplaceConversations();
@@ -1956,6 +1968,14 @@
   function renderMarketplaceProducts() {
     const grid = $("#mkt-products-grid");
     if (!grid) return;
+    const countEl = $("#mkt-products-count");
+    if (countEl) countEl.textContent = `(${mktState.products.length} / ${MAX_PRODUCTS_PER_SHOP})`;
+    const addBtn = $("#mkt-add-product-btn");
+    if (addBtn) {
+      const atLimit = mktState.products.length >= MAX_PRODUCTS_PER_SHOP;
+      addBtn.disabled = atLimit;
+      addBtn.title = atLimit ? `You've reached the ${MAX_PRODUCTS_PER_SHOP}-product limit.` : "";
+    }
     if (!mktState.products.length) {
       grid.innerHTML = `<p class="empty-note">No products yet — add your first one.</p>`;
       return;
@@ -2242,6 +2262,7 @@
   }
   $("#mkt-add-product-btn")?.addEventListener("click", () => {
     if (!mktState.shop) { toast("Open your store first."); return; }
+    if (mktState.products.length >= MAX_PRODUCTS_PER_SHOP) { toast(`You've reached the ${MAX_PRODUCTS_PER_SHOP}-product limit for one store.`); return; }
     openProductModal();
   });
   $("#mkt-product-modal-close")?.addEventListener("click", closeProductModal);

@@ -468,7 +468,11 @@
               <div class="mkt-shop-card__top">
                 <div class="mkt-shop-card__cover" id="mkt-my-shop-cover"></div>
                 <div class="mkt-shop-card__info">
-                  <h3 id="mkt-my-shop-name">—</h3>
+                  <div class="mkt-shop-card__title-row">
+                    <img class="mkt-shop-card__logo" id="mkt-my-shop-logo" src="" alt="" hidden>
+                    <span class="mkt-shop-card__logo mkt-shop-card__logo--fallback" id="mkt-my-shop-logo-fallback">?</span>
+                    <h3 id="mkt-my-shop-name">—</h3>
+                  </div>
                   <span class="muted" id="mkt-my-shop-cat">—</span>
                   <p id="mkt-my-shop-desc" class="mkt-shop-card__desc"></p>
                 </div>
@@ -480,7 +484,7 @@
             </div>
 
             <div class="view-head">
-              <div><div class="eyebrow-mini">Inventory</div><h3>Your products.</h3></div>
+              <div><div class="eyebrow-mini">Inventory</div><h3>Your products. <span class="muted" id="mkt-products-count" style="font-size:12.5px; font-weight:400;"></span></h3></div>
               <button class="ghost-btn" type="button" id="mkt-add-product-btn">+ Add product</button>
             </div>
             <div class="card-grid" id="mkt-products-grid"></div>

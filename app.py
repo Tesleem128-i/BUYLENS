@@ -743,13 +743,13 @@ class LivePriceCache(db.Model):
 # "message the seller" — a DM-style inquiry the seller sees in their own
 # Marketplace tab.
 # ---------------------------------------------------------------------------
-SHOP_DESIGNS = {"aurora", "sunset", "mono", "forest"}
+SHOP_DESIGNS = {"aurora", "sunset", "mono", "forest", "citrus", "volt"}
 DEFAULT_SHOP_DESIGN = "aurora"
 
 # "Template" = the layout/structure of the storefront (grid vs list vs big
 # gallery cards). "Design" (above) = the color theme. Picking both is what
 # the signup wizard's step 3 (template) and step 4 (design) map to.
-SHOP_TEMPLATES = {"grid", "catalog", "boutique"}
+SHOP_TEMPLATES = {"grid", "catalog", "boutique", "spotlight"}
 DEFAULT_SHOP_TEMPLATE = "grid"
 
 # A product's stock badge, settable from the dashboard without deleting it.
@@ -914,6 +914,7 @@ def save_uploaded_shop_image(file_storage, max_bytes=MAX_PROFILE_PICTURE_BYTES):
 
 
 MAX_PRODUCT_PHOTOS = 5
+MAX_PRODUCTS_PER_SHOP = 100
 
 # ---------------------------------------------------------------------------
 # "Buy from us first": before Prism sends a shopper to an AI price estimate
@@ -3663,6 +3664,10 @@ def api_shop_product_add():
     if not shop:
         return jsonify({"error": "Open your store before adding products."}), 400
 
+    existing_count = ShopProduct.query.filter_by(shop_id=shop.id).count()
+    if existing_count >= MAX_PRODUCTS_PER_SHOP:
+        return jsonify({"error": f"You've reached the {MAX_PRODUCTS_PER_SHOP}-product limit for one store."}), 400
+
     name = (request.form.get("name") or "").strip()
     price = (request.form.get("price") or "").strip()
     description = (request.form.get("description") or "").strip()
@@ -3816,6 +3821,20 @@ def api_shop_chat_start(slug):
     db.session.add(msg)
     db.session.commit()
     return jsonify({"buyerToken": convo.buyer_token, "conversation": convo.to_dict(msg), "messages": [msg.to_dict()]})
+
+
+@app.route("/api/shop/<slug>/chat/<buyer_token>/unread")
+def api_shop_chat_unread_peek(slug, buyer_token):
+    """Lightweight, non-destructive check used to badge the chat launcher
+    while the panel is closed — unlike the endpoint below, this does NOT
+    clear buyer_unread, so it's safe to poll in the background."""
+    shop = Shop.query.filter_by(slug=slug).first()
+    if not shop:
+        return jsonify({"error": "That store doesn't exist."}), 404
+    convo = ShopConversation.query.filter_by(shop_id=shop.id, buyer_token=buyer_token).first()
+    if not convo:
+        return jsonify({"error": "Conversation not found."}), 404
+    return jsonify({"buyerUnread": convo.buyer_unread or 0})
 
 
 @app.route("/api/shop/<slug>/chat/<buyer_token>")
