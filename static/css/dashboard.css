@@ -356,6 +356,8 @@
 .seg--themes{ flex-wrap:wrap; border-radius:16px; }
 .seg__opt{ padding:8px 16px; border-radius:100px; border:none; background:none; color:var(--ink-dim); font-size:12.5px; cursor:pointer; transition:all .25s ease; }
 .seg__opt.is-active{ background:linear-gradient(90deg, var(--cyan), var(--violet)); color:var(--void); font-weight:700; }
+.seg--themes-swatch .seg__opt{ display:inline-flex; align-items:center; gap:7px; }
+.seg__swatch{ width:14px; height:14px; border-radius:50%; flex:none; background:linear-gradient(135deg, var(--sw1), var(--sw2)); border:1px solid rgba(255,255,255,.25); }
 
 .scan-grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch; }
 @media (max-width:1000px){ .scan-grid{ grid-template-columns:1fr; } }

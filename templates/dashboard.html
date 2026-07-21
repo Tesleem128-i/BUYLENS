@@ -428,17 +428,23 @@
                     <div class="mkt-template-opt__preview"><span style="top:6px;left:8px;width:36px;height:22px;"></span></div>
                     <span class="label">Boutique</span>
                   </div>
+                  <div class="mkt-template-opt" data-template="spotlight">
+                    <div class="mkt-template-opt__preview"><span style="top:6px;left:6px;width:15px;height:14px;"></span><span style="top:6px;left:25px;width:15px;height:32px;"></span><span style="top:6px;left:44px;width:15px;height:14px;"></span><span style="top:24px;left:6px;width:15px;height:14px;"></span><span style="top:24px;left:44px;width:15px;height:14px;"></span></div>
+                    <span class="label">Spotlight</span>
+                  </div>
                 </div>
               </div>
 
               <!-- Step 4: color design -->
               <div class="mkt-wizard__step" data-step="4">
                 <p class="muted" style="font-size:12.5px;">Pick a color theme. You can change this anytime.</p>
-                <div class="seg seg--themes" id="mkt-design-seg">
-                  <button type="button" class="seg__opt is-active" data-design="aurora">Aurora</button>
-                  <button type="button" class="seg__opt" data-design="sunset">Sunset</button>
-                  <button type="button" class="seg__opt" data-design="mono">Mono</button>
-                  <button type="button" class="seg__opt" data-design="forest">Forest</button>
+                <div class="seg seg--themes seg--themes-swatch" id="mkt-design-seg">
+                  <button type="button" class="seg__opt is-active" data-design="aurora" style="--sw1:#4ce0ff; --sw2:#9d6bff;"><span class="seg__swatch"></span>Aurora</button>
+                  <button type="button" class="seg__opt" data-design="sunset" style="--sw1:#ff8a5c; --sw2:#ff4d8d;"><span class="seg__swatch"></span>Sunset</button>
+                  <button type="button" class="seg__opt" data-design="mono" style="--sw1:#14161a; --sw2:#54575e;"><span class="seg__swatch"></span>Mono</button>
+                  <button type="button" class="seg__opt" data-design="forest" style="--sw1:#3ddc97; --sw2:#e8c463;"><span class="seg__swatch"></span>Forest</button>
+                  <button type="button" class="seg__opt" data-design="citrus" style="--sw1:#7c5cff; --sw2:#ff5c8a;"><span class="seg__swatch"></span>Citrus</button>
+                  <button type="button" class="seg__opt" data-design="volt" style="--sw1:#3fd0ff; --sw2:#7c5cff;"><span class="seg__swatch"></span>Volt</button>
                 </div>
               </div>
 
